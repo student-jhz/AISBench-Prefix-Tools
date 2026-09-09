@@ -18,7 +18,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 from datetime import datetime
-from typing import Optional, Callable
+from typing import Optional, Callable, Tuple
 
 from ssh_manager import SSHManager
 from docker_manager import DockerManager
@@ -959,6 +959,14 @@ class WizardApp:
 
         form.columnconfigure(1, weight=1)
 
+        # config.py 路径信息
+        path_frame = tk.Frame(frame, bg=COLOR_CARD, relief=tk.SOLID, bd=1)
+        path_frame.pack(fill=tk.X, pady=(4, 8))
+        self.config_path_lbl = tk.Label(path_frame, text="config.py 位置: 尚未部署",
+                                        bg=COLOR_CARD, fg=COLOR_TEXT_MUTED,
+                                        font=("Consolas", 8), justify=tk.LEFT, anchor=tk.W)
+        self.config_path_lbl.pack(padx=16, pady=8, anchor=tk.W)
+
         # 按钮区域
         btn_frame = tk.Frame(frame, bg=COLOR_BG)
         btn_frame.pack(fill=tk.X, pady=8)
@@ -967,17 +975,21 @@ class WizardApp:
                  font=("Segoe UI", 9, "bold"), relief=tk.FLAT, padx=16, pady=4,
                  command=self._save_config).pack(side=tk.LEFT)
 
+        tk.Button(btn_frame, text="验证配置(读取容器)", bg=COLOR_SUCCESS, fg="white",
+                 font=("Segoe UI", 9), relief=tk.FLAT, padx=12, pady=4,
+                 command=self._verify_config).pack(side=tk.LEFT, padx=8)
+
         self.config_status_lbl = tk.Label(btn_frame, text="", bg=COLOR_BG,
                                          fg=COLOR_TEXT_MUTED, font=("Segoe UI", 9))
         self.config_status_lbl.pack(side=tk.LEFT, padx=12)
 
         # 配置预览
-        tk.Label(frame, text="配置预览:", bg=COLOR_BG, fg=COLOR_TEXT,
+        tk.Label(frame, text="配置预览 (内存中):", bg=COLOR_BG, fg=COLOR_TEXT,
                font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(8, 4))
 
         self.config_preview = scrolledtext.ScrolledText(frame, height=10,
-                                                        font=("Consolas", 9),
-                                                        bg="#1e1e1e", fg="#d4d4d4")
+                                                         font=("Consolas", 9),
+                                                         bg="#1e1e1e", fg="#d4d4d4")
         self.config_preview.pack(fill=tk.BOTH, expand=True)
 
         # 同步已有值
@@ -992,6 +1004,7 @@ class WizardApp:
             self.config_entry_vars['host_port'].set(self.host_port_var.get())
             self.config_entry_vars['api_key'].set(self.api_key_var.get())
             self.config_entry_vars['dataset_path'].set(self.dataset_path_var.get())
+            self._update_config_path_label()
             self._update_config_preview()
 
     def _update_config_preview(self):
@@ -1004,8 +1017,33 @@ class WizardApp:
             self.config_preview.delete(1.0, tk.END)
             self.config_preview.insert(1.0, content)
 
+    def _update_config_path_label(self):
+        """更新config.py路径显示"""
+        if not hasattr(self, 'config_path_lbl'):
+            return
+        if self.docker and self.docker.code_host_path:
+            host_path = f"{self.docker.code_host_path}/config.py"
+            container_path = f"{self.docker.code_mount_path}/config.py"
+            text = f"config.py 位置:\n  宿主机: {host_path}\n  容器内: {container_path}"
+            self.config_path_lbl.config(text=text, fg=COLOR_TEXT)
+        else:
+            self.config_path_lbl.config(text="config.py 位置: 尚未部署（请先完成Docker部署）",
+                                        fg=COLOR_TEXT_MUTED)
+
+    @staticmethod
+    def _parse_config_content(content: str) -> dict:
+        """从config.py文本中解析键值对"""
+        import re
+        values = {}
+        for match in re.finditer(r'^(\w+)\s*=\s*"([^"]*)"', content, re.MULTILINE):
+            values[match.group(1)] = match.group(2)
+        pod_match = re.search(r'^POD_INFO\s*=\s*(.+)$', content, re.MULTILINE)
+        if pod_match:
+            values['POD_INFO'] = pod_match.group(1).strip()
+        return values
+
     def _save_config(self):
-        """保存配置到容器"""
+        """保存配置到容器，并回读验证"""
         if not self.config_mgr:
             messagebox.showwarning("提示", "请先完成Docker部署")
             return
@@ -1020,13 +1058,102 @@ class WizardApp:
 
         # 写入
         ok = self.config_mgr.write_config_to_container(config)
-        if ok:
-            self.config_status_lbl.config(text="✓ 配置已保存", fg=COLOR_SUCCESS)
-            self._update_config_preview()
-            messagebox.showinfo("成功", "config.py 已写入容器")
-        else:
+        if not ok:
             self.config_status_lbl.config(text="✗ 保存失败", fg=COLOR_ERROR)
             messagebox.showerror("失败", "写入config.py失败")
+            return
+
+        self._update_config_path_label()
+        self._update_config_preview()
+
+        # 回读验证
+        read_back = self.config_mgr.read_config_from_container()
+        if read_back is None:
+            self.config_status_lbl.config(text="✓ 已写入 (回读失败，请手动验证)", fg=COLOR_WARNING)
+            messagebox.showwarning("警告", "config.py 已写入，但回读失败，请点击\"验证配置\"手动检查")
+            return
+
+        # 比较关键值
+        saved_values = self._parse_config_content(read_back)
+        gui_values = {k.upper(): v.get() for k, v in self.config_entry_vars.items()}
+        key_fields = ['MODEL_PATH', 'MODEL_NAME', 'HOST_IP', 'HOST_PORT', 'DATASET_PATH']
+        mismatches = []
+        for field in key_fields:
+            gui_val = gui_values.get(field, '')
+            saved_val = saved_values.get(field, '')
+            if gui_val and saved_val and gui_val != saved_val:
+                mismatches.append(f"  {field}: 界面={gui_val}  容器={saved_val}")
+
+        if mismatches:
+            self.config_status_lbl.config(text="⚠ 已写入但存在不一致!", fg=COLOR_ERROR)
+            messagebox.showwarning("配置不一致",
+                                   "config.py 已写入，但回读发现以下不一致:\n\n" + "\n".join(mismatches))
+        else:
+            self.config_status_lbl.config(text="✓ 配置已保存并验证一致", fg=COLOR_SUCCESS)
+            host_path = f"{self.docker.code_host_path}/config.py"
+            container_path = f"{self.docker.code_mount_path}/config.py"
+            messagebox.showinfo("成功",
+                               f"config.py 已写入并回读验证一致!\n\n"
+                               f"宿主机路径: {host_path}\n"
+                               f"容器内路径: {container_path}\n\n"
+                               f"关键配置:\n"
+                               f"  MODEL_PATH = {saved_values.get('MODEL_PATH', '?')}\n"
+                               f"  MODEL_NAME = {saved_values.get('MODEL_NAME', '?')}\n"
+                               f"  HOST_IP    = {saved_values.get('HOST_IP', '?')}\n"
+                               f"  HOST_PORT  = {saved_values.get('HOST_PORT', '?')}")
+
+    def _verify_config(self):
+        """从容器读取config.py并显示，与界面值对比"""
+        if not self.config_mgr:
+            messagebox.showwarning("提示", "请先完成Docker部署")
+            return
+
+        self._update_config_path_label()
+
+        read_back = self.config_mgr.read_config_from_container()
+        if read_back is None:
+            self.config_status_lbl.config(text="✗ 无法读取容器内config.py", fg=COLOR_ERROR)
+            messagebox.showerror("失败",
+                                 "无法从容器读取config.py\n"
+                                 "可能原因: 1)未点击\"保存配置到容器\" 2)路径错误 3)SSH连接断开")
+            return
+
+        # 在预览区显示容器内实际内容
+        header = "=" * 50 + "\n容器内实际 config.py 内容:\n" + "=" * 50 + "\n\n"
+        self.config_preview.delete(1.0, tk.END)
+        self.config_preview.insert(1.0, header + read_back)
+
+        # 对比关键值
+        saved_values = self._parse_config_content(read_back)
+        gui_values = {k.upper(): v.get() for k, v in self.config_entry_vars.items()}
+        key_fields = ['MODEL_PATH', 'MODEL_NAME', 'HOST_IP', 'HOST_PORT', 'DATASET_PATH']
+
+        all_match = True
+        report_lines = []
+        for field in key_fields:
+            gui_val = gui_values.get(field, '')
+            saved_val = saved_values.get(field, '')
+            if not saved_val:
+                report_lines.append(f"  {field}: 容器中未找到")
+                all_match = False
+            elif gui_val and gui_val != saved_val:
+                report_lines.append(f"  ⚠ {field}: 界面=[{gui_val}]  容器=[{saved_val}]")
+                all_match = False
+            else:
+                report_lines.append(f"  ✓ {field}: {saved_val}")
+
+        if all_match:
+            self.config_status_lbl.config(text="✓ 验证通过，界面与容器配置一致", fg=COLOR_SUCCESS)
+            messagebox.showinfo("验证通过",
+                               f"容器内config.py与界面配置一致!\n\n"
+                               f"{''.join(report_lines)}\n\n"
+                               f"MODEL_PATH = {saved_values.get('MODEL_PATH', '?')}")
+        else:
+            self.config_status_lbl.config(text="⚠ 界面与容器配置不一致", fg=COLOR_ERROR)
+            messagebox.showwarning("配置不一致",
+                                   f"界面与容器内config.py存在差异:\n\n"
+                                   + "\n".join(report_lines) +
+                                   "\n\n请点击\"保存配置到容器\"重新写入")
 
     # ============================================================
     #  Step 4: 测试用例设计
@@ -1332,8 +1459,48 @@ class WizardApp:
 
         threading.Thread(target=_do_execute, daemon=True).start()
 
+    def _check_model_path_in_container(self) -> Tuple[bool, str]:
+        """在容器内检查MODEL_PATH是否有效（路径存在且含config.json）"""
+        check_script = (
+            'import config, os, sys\n'
+            'p = config.MODEL_PATH\n'
+            'if not os.path.isdir(p):\n'
+            '    print(f"FAIL: MODEL_PATH不存在: {p}")\n'
+            '    print("请检查: 1)模型路径是否正确 2)Docker是否正确挂载了模型权重")\n'
+            '    sys.exit(1)\n'
+            'if not os.path.isfile(os.path.join(p, "config.json")):\n'
+            '    print(f"FAIL: {p}/config.json 不存在")\n'
+            '    print("模型权重可能未正确部署，Docker挂载可能创建了空目录")\n'
+            '    sys.exit(1)\n'
+            'print(f"OK: MODEL_PATH={p}")\n'
+        )
+        check_host_path = f"{self.docker.code_host_path}/_check_model_path.py"
+        if not self.ssh.write_file(check_host_path, check_script):
+            return False, "无法写入预检查脚本到容器挂载目录"
+
+        cmd = (
+            f"docker exec -w {self.docker.code_mount_path} {self.docker.container_name} "
+            f"python3 _check_model_path.py"
+        )
+        code, out, err = self.ssh.execute(cmd)
+        self.ssh.execute(f"rm -f {check_host_path}")
+
+        out = out.strip()
+        if code == 0 and "OK:" in out:
+            return True, out
+        return False, out if out else (err.strip() if err else "未知错误")
+
     def _run_test_sequence(self, local_dir):
         """执行测试的4阶段流水线（在后台线程中运行）"""
+        # ===== 阶段0: 预检查模型路径 =====
+        self._log_exec("[0/4] 预检查: 验证容器内MODEL_PATH...\n")
+        model_ok, model_msg = self._check_model_path_in_container()
+        if not model_ok:
+            self._log_exec(f"  ✗ {model_msg}\n")
+            self._log_exec("  请修正MODEL_PATH后重新保存config.py到容器，再重试\n")
+            return
+        self._log_exec(f"  ✓ {model_msg}\n\n")
+
         # ===== 阶段1: 生成.sh脚本 =====
         self._log_exec("[1/4] 生成测试脚本...\n")
         script_content, log_dir_name = self.designer.generate_shell_script()
@@ -1352,10 +1519,9 @@ class WizardApp:
         )
 
         if exit_code != 0:
-            self._log_exec(f"\n  ✗ 脚本执行失败 (exit_code={exit_code})\n")
-            return
-
-        self._log_exec(f"\n  ✓ 测试脚本执行完成\n")
+            self._log_exec(f"\n  ⚠ 部分测试失败 (exit_code={exit_code})，继续下载日志以便排查...\n")
+        else:
+            self._log_exec(f"\n  ✓ 测试脚本执行完成\n")
 
         # ===== 阶段3: 下载日志 =====
         self._log_exec("\n[3/4] 下载测试日志到本地...\n")
@@ -1418,7 +1584,21 @@ class WizardApp:
             ))
         else:
             self._log_exec("  ✗ 未能从日志中提取到有效结果\n")
-            self.root.after(0, lambda: messagebox.showwarning("提示", "测试已完成但未提取到有效结果，请检查日志"))
+            preflight_path = os.path.join(local_log_dir, "preflight.log")
+            if os.path.exists(preflight_path):
+                try:
+                    with open(preflight_path, 'r', encoding='utf-8', errors='replace') as f:
+                        preflight_content = f.read().strip()
+                    if preflight_content:
+                        self._log_exec(f"  预检查错误信息:\n{preflight_content}\n")
+                except Exception:
+                    pass
+            else:
+                test_logs = [f for f in os.listdir(local_log_dir) if f.endswith('.log')]
+                if test_logs:
+                    self._log_exec(f"  请检查以下日志文件中的错误信息:\n  {', '.join(test_logs)}\n")
+                    self._log_exec(f"  日志目录: {local_log_dir}\n")
+            self.root.after(0, lambda: messagebox.showwarning("提示", "测试已完成但未提取到有效结果，请检查执行日志"))
 
     def _log_exec(self, text):
         """向执行日志缓冲区写入（线程安全，由主线程定时刷新）"""
