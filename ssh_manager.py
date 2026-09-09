@@ -249,11 +249,11 @@ class SSHManager:
         if not self._connected or not self.sftp:
             return False
         try:
-            with self.sftp.open(remote_path, 'w') as f:
-                f.write(content)
+            with self.sftp.open(remote_path, 'wb') as f:
+                f.write(content.encode('utf-8'))
             return True
         except Exception as e:
-            print(f"写入文件失败: {e}")
+            print(f"写入文件失败: {remote_path}: {e}")
             return False
 
     def read_file(self, remote_path: str) -> Optional[str]:

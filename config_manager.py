@@ -84,15 +84,19 @@ POD_INFO = {pod_info}
     def write_config_to_container(self, config: Dict[str, str],
                                   config_filename: str = "config.py") -> bool:
         """
-        将config.py写入到容器内（通过宿主机挂载目录）
+        将config.py写入到容器内（通过宿主机挂载目录写入）
+        SFTP操作的是宿主机文件系统，需用宿主机路径
         """
+        if not self.docker.code_host_path:
+            print("错误: code_host_path 为空，容器可能未正确部署")
+            return False
         content = self.generate_config_content(config)
-        remote_path = f"{self.docker.code_mount_path}/{config_filename}"
+        remote_path = f"{self.docker.code_host_path}/{config_filename}"
         return self.docker.ssh.write_file(remote_path, content)
 
     def read_config_from_container(self, config_filename: str = "config.py") -> Optional[str]:
-        """读取容器内的config.py"""
-        remote_path = f"{self.docker.code_mount_path}/{config_filename}"
+        """读取容器内的config.py（通过宿主机挂载目录读取）"""
+        remote_path = f"{self.docker.code_host_path}/{config_filename}"
         return self.docker.ssh.read_file(remote_path)
 
     def validate_config(self, config: Dict[str, str]) -> list:
