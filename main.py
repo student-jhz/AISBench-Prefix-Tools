@@ -72,6 +72,13 @@ class WizardApp:
         self.code_host_path = ""
         self.remote_tar_path = ""
         self.remote_zip_path = ""
+
+        # 日志缓冲 + 取消标志（解决后台线程阻塞UI）
+        self._log_buffer = ""
+        self._exec_log_buffer = ""
+        self._cancel_flag = threading.Event()
+        self._flush_timer_id = None
+        self._exec_flush_timer_id = None
         self.model_path_var = tk.StringVar()
         self.host_ip_var = tk.StringVar()
         self.host_port_var = tk.StringVar(value="8000")
@@ -559,6 +566,13 @@ class WizardApp:
                                     command=self._start_deploy)
         self.deploy_btn.pack(side=tk.LEFT)
 
+        self.cancel_deploy_btn = tk.Button(btn_frame, text="取消", bg=COLOR_ERROR,
+                                           fg="white", font=("Segoe UI", 9),
+                                           relief=tk.FLAT, padx=12, pady=6,
+                                           command=self._cancel_deploy,
+                                           state=tk.DISABLED)
+        self.cancel_deploy_btn.pack(side=tk.LEFT, padx=8)
+
         # 日志输出
         tk.Label(frame, text="部署日志:", bg=COLOR_BG, fg=COLOR_TEXT,
                font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(8, 4))
@@ -570,9 +584,29 @@ class WizardApp:
         self.docker_log.pack(fill=tk.BOTH, expand=True)
 
     def _log_docker(self, text):
-        """向Docker日志区域输出"""
-        self.docker_log.insert(tk.END, text)
-        self.docker_log.see(tk.END)
+        """向日志缓冲区写入（线程安全，由主线程定时刷新到UI）"""
+        self._log_buffer += text
+
+    def _flush_log_buffer(self):
+        """主线程定时刷新部署日志缓冲区到UI（每200ms）"""
+        if self._log_buffer:
+            self.docker_log.insert(tk.END, self._log_buffer)
+            self._log_buffer = ""
+            self.docker_log.see(tk.END)
+        self._flush_timer_id = self.root.after(200, self._flush_log_buffer)
+
+    def _flush_exec_log_buffer(self):
+        """主线程定时刷新执行日志缓冲区到UI（每200ms）"""
+        if self._exec_log_buffer:
+            self.exec_log.insert(tk.END, self._exec_log_buffer)
+            self._exec_log_buffer = ""
+            self.exec_log.see(tk.END)
+        self._exec_flush_timer_id = self.root.after(200, self._flush_exec_log_buffer)
+
+    def _cancel_deploy(self):
+        """取消部署"""
+        self._cancel_flag.set()
+        self._log_docker("\n⚠ 正在取消部署...\n")
 
     def _start_deploy(self):
         """开始部署流程"""
@@ -588,12 +622,33 @@ class WizardApp:
             messagebox.showwarning("提示", "请先完成文件和模型路径选择")
             return
 
-        self.deploy_btn.config(state=tk.DISABLED, text="部署中...")
+        self._cancel_flag.clear()
+        self._log_buffer = ""
         self.docker_log.delete(1.0, tk.END)
+        self.deploy_btn.config(state=tk.DISABLED, text="部署中...")
+        self.cancel_deploy_btn.config(state=tk.NORMAL)
+
+        # 启动定时刷新日志
+        if self._flush_timer_id:
+            self.root.after_cancel(self._flush_timer_id)
+        self._flush_timer_id = self.root.after(200, self._flush_log_buffer)
 
         def _do_deploy():
             self._deploy_sequence(tar, zipf, model)
-            self.root.after(0, lambda: self.deploy_btn.config(state=tk.NORMAL, text="重新部署"))
+            # 结束后恢复UI
+            def _restore():
+                self.deploy_btn.config(state=tk.NORMAL, text="重新部署")
+                self.cancel_deploy_btn.config(state=tk.DISABLED)
+                # 最后刷新一次确保所有日志已输出
+                if self._log_buffer:
+                    self.docker_log.insert(tk.END, self._log_buffer)
+                    self._log_buffer = ""
+                    self.docker_log.see(tk.END)
+                # 停止定时刷新
+                if self._flush_timer_id:
+                    self.root.after_cancel(self._flush_timer_id)
+                    self._flush_timer_id = None
+            self.root.after(0, _restore)
 
         threading.Thread(target=_do_deploy, daemon=True).start()
 
@@ -610,18 +665,20 @@ class WizardApp:
             return
         self._log_docker(f"  ✓ {msg}\n\n")
 
+        if self._cancel_flag.is_set():
+            self._log_docker("  ⚹ 已取消\n")
+            return
+
         # Step 2: 上传镜像tar
         self._log_docker("[2/5] 上传镜像tar包...\n")
         tar_name = os.path.basename(tar_path)
         self.remote_tar_path = f"{self.docker.remote_work_base}/{tar_name}"
         self.ssh.mkdir_p(self.docker.remote_work_base)
-        self.docker_info_labels["tar"].config(text=tar_name)
+        self.root.after(0, lambda: self.docker_info_labels["tar"].config(text=tar_name))
 
         def _upload_progress(transferred, total):
             pct = transferred * 100 // total if total > 0 else 0
-            self.root.after(0, lambda: self._log_docker(
-                f"\r  上传中: {transferred//1024//1024}MB / {total//1024//1024}MB ({pct}%)"
-            ))
+            self._log_docker(f"\r  上传中: {transferred//1024//1024}MB / {total//1024//1024}MB ({pct}%)")
 
         ok = self.ssh.upload_file(tar_path, self.remote_tar_path, _upload_progress)
         self._log_docker("\n")
@@ -630,17 +687,25 @@ class WizardApp:
             return
         self._log_docker("  ✓ 镜像上传完成\n\n")
 
+        if self._cancel_flag.is_set():
+            self._log_docker("  ⚹ 已取消\n")
+            return
+
         # Step 3: Docker load
         self._log_docker("[3/5] 加载Docker镜像...\n")
         ok, image_name = self.docker.load_image(
             self.remote_tar_path,
-            callback=lambda t: self.root.after(0, lambda: self._log_docker(t))
+            callback=lambda t: self._log_docker(t)  # 直接写缓冲区，不经过after
         )
         if not ok:
             self._log_docker(f"  ✗ 镜像加载失败: {image_name}\n")
             return
-        self.docker_info_labels["image"].config(text=image_name)
+        self.root.after(0, lambda n=image_name: self.docker_info_labels["image"].config(text=n))
         self._log_docker("\n")
+
+        if self._cancel_flag.is_set():
+            self._log_docker("  ⚹ 已取消\n")
+            return
 
         # Step 4: 上传并解压代码zip
         self._log_docker("[4/5] 上传并解压代码包...\n")
@@ -655,29 +720,33 @@ class WizardApp:
         ok, extracted_path = self.docker.extract_code_zip(
             self.remote_zip_path,
             self.docker.remote_work_base,
-            callback=lambda t: self.root.after(0, lambda: self._log_docker(t))
+            callback=lambda t: self._log_docker(t)  # 直接写缓冲区
         )
         if not ok:
             self._log_docker(f"  ✗ 代码解压失败\n")
             return
 
         self.code_host_path = extracted_path
-        self.docker_info_labels["zip"].config(text=extracted_path)
+        self.root.after(0, lambda p=extracted_path: self.docker_info_labels["zip"].config(text=p))
         self._log_docker(f"  ✓ 代码解压到: {extracted_path}\n\n")
+
+        if self._cancel_flag.is_set():
+            self._log_docker("  ⚹ 已取消\n")
+            return
 
         # Step 5: 创建容器
         self._log_docker("[5/5] 创建并启动容器...\n")
         container_name = self.docker.generate_container_name()
         ok, msg = self.docker.create_container(
             image_name, model_path, extracted_path, container_name,
-            callback=lambda t: self.root.after(0, lambda: self._log_docker(t))
+            callback=lambda t: self._log_docker(t)  # 直接写缓冲区
         )
         if not ok:
             self._log_docker(f"  ✗ {msg}\n")
             return
 
-        self.docker_info_labels["container"].config(text=container_name)
-        self.docker_info_labels["model"].config(text=model_path)
+        self.root.after(0, lambda n=container_name: self.docker_info_labels["container"].config(text=n))
+        self.root.after(0, lambda m=model_path: self.docker_info_labels["model"].config(text=m))
         self._log_docker(f"\n  ✓ 容器 {container_name} 已启动运行\n")
         self._log_docker(f"  ✓ 部署完成!\n")
 
@@ -1052,108 +1121,121 @@ class WizardApp:
             return
 
         self.exec_log.delete(1.0, tk.END)
+        self._exec_log_buffer = ""
         self.exec_test_btn.config(state=tk.DISABLED, text="执行中...")
 
+        # 启动定时刷新执行日志
+        if self._exec_flush_timer_id:
+            self.root.after_cancel(self._exec_flush_timer_id)
+        self._exec_flush_timer_id = self.root.after(200, self._flush_exec_log_buffer)
+
         def _do_execute():
-            # ===== 阶段1: 生成.sh脚本 =====
-            self._log_exec("[1/4] 生成测试脚本...\n")
-            script_content, log_dir_name = self.designer.generate_shell_script()
-            self._log_exec(f"  日志目录名: {log_dir_name}\n")
-
-            # ===== 阶段2: 上传并运行脚本 =====
-            self._log_exec("\n[2/4] 上传脚本到容器并执行...\n")
-            container_script = self.docker.write_script(script_content, "run_tests.sh")
-            self._log_exec(f"  脚本路径(容器内): {container_script}\n")
-            self._log_exec("  开始执行测试 (这可能需要较长时间)...\n\n")
-
-            exit_code = self.docker.run_script(
-                "run_tests.sh",
-                callback=lambda t: self.root.after(0, lambda: self._log_exec(t)),
-                timeout=7200
-            )
-
-            if exit_code != 0:
-                self._log_exec(f"\n  ✗ 脚本执行失败 (exit_code={exit_code})\n")
-                self.root.after(0, lambda: self.exec_test_btn.config(state=tk.NORMAL, text="执行测试 → 生成CSV"))
-                return
-
-            self._log_exec(f"\n  ✓ 测试脚本执行完成\n")
-
-            # ===== 阶段3: 下载日志 =====
-            self._log_exec("\n[3/4] 下载测试日志到本地...\n")
-
-            # 查找日志目录
-            remote_log_dir = self.docker.find_latest_log_dir()
-            if not remote_log_dir:
-                # 回退: 使用已知的日志目录名
-                remote_log_dir = f"{self.docker.code_host_path}/{log_dir_name}"
-
-            self._log_exec(f"  远程日志目录: {remote_log_dir}\n")
-
-            # 下载日志到本地
-            local_log_dir = os.path.join(local_dir, log_dir_name)
-            os.makedirs(local_log_dir, exist_ok=True)
-
-            local_log_files = self.docker.download_logs(
-                remote_log_dir, local_log_dir,
-                callback=lambda t: self.root.after(0, lambda: self._log_exec(t))
-            )
-
-            if not local_log_files:
-                self._log_exec("  ✗ 未下载到任何日志文件\n")
-                self.root.after(0, lambda: self.exec_test_btn.config(state=tk.NORMAL, text="执行测试 → 生成CSV"))
-                return
-
-            self._log_exec(f"  ✓ 已下载 {len(local_log_files)} 个日志文件到 {local_log_dir}\n")
-
-            # ===== 阶段4: 解析日志生成CSV =====
-            self._log_exec("\n[4/4] 解析日志生成CSV结果...\n")
-
-            csv_path = os.path.join(local_dir, f"results_{log_dir_name}.csv")
-
-            results = parse_log_directory(
-                local_log_dir, csv_path,
-                progress_callback=lambda msg, ok, row: self.root.after(0, lambda: self._log_exec(msg + "\n"))
-            )
-
-            if results:
-                self._log_exec(f"\n{'='*60}\n")
-                self._log_exec(f"✓ 测试完成! 结果已保存\n")
-                self._log_exec(f"  CSV文件: {csv_path}\n")
-                self._log_exec(f"  日志目录: {local_log_dir}\n")
-                self._log_exec(f"  共 {len(results)} 条记录\n")
-                self._log_exec(f"{'='*60}\n\n")
-
-                # 输出结果摘要表
-                self._log_exec("结果摘要:\n")
-                self._log_exec("-" * 80 + "\n")
-                self._log_exec(f"{'Input':>8} {'Output':>8} {'TTFT_avg':>10} {'TPOT_avg':>10} "
-                              f"{'QPS':>8} {'Ext_Hit%':>10}\n")
-                self._log_exec("-" * 80 + "\n")
-                for row in results:
-                    self._log_exec(
-                        f"{row.get('input_len',''):>8} {row.get('output_len',''):>8} "
-                        f"{str(row.get('TTFT_avg','')):>10} {str(row.get('TPOT_avg','')):>10} "
-                        f"{str(row.get('qps','')):>8} {str(row.get('external_hit_rate','')):>10}\n"
-                    )
-                self._log_exec("-" * 80 + "\n")
-
-                self.root.after(0, lambda: messagebox.showinfo(
-                    "完成",
-                    f"测试完成!\n\nCSV: {csv_path}\n日志: {local_log_dir}\n共 {len(results)} 条记录"
-                ))
-            else:
-                self._log_exec("  ✗ 未能从日志中提取到有效结果\n")
-                self.root.after(0, lambda: messagebox.showwarning("提示", "测试已完成但未提取到有效结果，请检查日志"))
-
-            self.root.after(0, lambda: self.exec_test_btn.config(state=tk.NORMAL, text="执行测试 → 生成CSV"))
+            self._run_test_sequence(local_dir)
+            def _restore():
+                self.exec_test_btn.config(state=tk.NORMAL, text="执行测试 → 生成CSV")
+                # 最后刷新一次
+                if self._exec_log_buffer:
+                    self.exec_log.insert(tk.END, self._exec_log_buffer)
+                    self._exec_log_buffer = ""
+                    self.exec_log.see(tk.END)
+                if self._exec_flush_timer_id:
+                    self.root.after_cancel(self._exec_flush_timer_id)
+                    self._exec_flush_timer_id = None
+            self.root.after(0, _restore)
 
         threading.Thread(target=_do_execute, daemon=True).start()
 
+    def _run_test_sequence(self, local_dir):
+        """执行测试的4阶段流水线（在后台线程中运行）"""
+        # ===== 阶段1: 生成.sh脚本 =====
+        self._log_exec("[1/4] 生成测试脚本...\n")
+        script_content, log_dir_name = self.designer.generate_shell_script()
+        self._log_exec(f"  日志目录名: {log_dir_name}\n")
+
+        # ===== 阶段2: 上传并运行脚本 =====
+        self._log_exec("\n[2/4] 上传脚本到容器并执行...\n")
+        container_script = self.docker.write_script(script_content, "run_tests.sh")
+        self._log_exec(f"  脚本路径(容器内): {container_script}\n")
+        self._log_exec("  开始执行测试 (这可能需要较长时间)...\n\n")
+
+        exit_code = self.docker.run_script(
+            "run_tests.sh",
+            callback=lambda t: self._log_exec(t),  # 直接写缓冲区
+            timeout=7200
+        )
+
+        if exit_code != 0:
+            self._log_exec(f"\n  ✗ 脚本执行失败 (exit_code={exit_code})\n")
+            return
+
+        self._log_exec(f"\n  ✓ 测试脚本执行完成\n")
+
+        # ===== 阶段3: 下载日志 =====
+        self._log_exec("\n[3/4] 下载测试日志到本地...\n")
+
+        remote_log_dir = self.docker.find_latest_log_dir()
+        if not remote_log_dir:
+            remote_log_dir = f"{self.docker.code_host_path}/{log_dir_name}"
+
+        self._log_exec(f"  远程日志目录: {remote_log_dir}\n")
+
+        local_log_dir = os.path.join(local_dir, log_dir_name)
+        os.makedirs(local_log_dir, exist_ok=True)
+
+        local_log_files = self.docker.download_logs(
+            remote_log_dir, local_log_dir,
+            callback=lambda t: self._log_exec(t)  # 直接写缓冲区
+        )
+
+        if not local_log_files:
+            self._log_exec("  ✗ 未下载到任何日志文件\n")
+            return
+
+        self._log_exec(f"  ✓ 已下载 {len(local_log_files)} 个日志文件到 {local_log_dir}\n")
+
+        # ===== 阶段4: 解析日志生成CSV =====
+        self._log_exec("\n[4/4] 解析日志生成CSV结果...\n")
+
+        csv_path = os.path.join(local_dir, f"results_{log_dir_name}.csv")
+
+        results = parse_log_directory(
+            local_log_dir, csv_path,
+            progress_callback=lambda msg, ok, row: self._log_exec(msg + "\n")
+        )
+
+        if results:
+            self._log_exec(f"\n{'='*60}\n")
+            self._log_exec(f"✓ 测试完成! 结果已保存\n")
+            self._log_exec(f"  CSV文件: {csv_path}\n")
+            self._log_exec(f"  日志目录: {local_log_dir}\n")
+            self._log_exec(f"  共 {len(results)} 条记录\n")
+            self._log_exec(f"{'='*60}\n\n")
+
+            # 输出结果摘要表
+            self._log_exec("结果摘要:\n")
+            self._log_exec("-" * 80 + "\n")
+            self._log_exec(f"{'Input':>8} {'Output':>8} {'TTFT_avg':>10} {'TPOT_avg':>10} "
+                          f"{'QPS':>8} {'Ext_Hit%':>10}\n")
+            self._log_exec("-" * 80 + "\n")
+            for row in results:
+                self._log_exec(
+                    f"{row.get('input_len',''):>8} {row.get('output_len',''):>8} "
+                    f"{str(row.get('TTFT_avg','')):>10} {str(row.get('TPOT_avg','')):>10} "
+                    f"{str(row.get('qps','')):>8} {str(row.get('external_hit_rate','')):>10}\n"
+                )
+            self._log_exec("-" * 80 + "\n")
+
+            self.root.after(0, lambda: messagebox.showinfo(
+                "完成",
+                f"测试完成!\n\nCSV: {csv_path}\n日志: {local_log_dir}\n共 {len(results)} 条记录"
+            ))
+        else:
+            self._log_exec("  ✗ 未能从日志中提取到有效结果\n")
+            self.root.after(0, lambda: messagebox.showwarning("提示", "测试已完成但未提取到有效结果，请检查日志"))
+
     def _log_exec(self, text):
-        """输出执行日志"""
-        self.exec_log.insert(tk.END, text)
-        self.exec_log.see(tk.END)
+        """向执行日志缓冲区写入（线程安全，由主线程定时刷新）"""
+        self._exec_log_buffer += text
 
     # ============================================================
     #  导航逻辑
