@@ -1586,17 +1586,20 @@ class WizardApp:
 
             # 输出结果摘要表
             self._log_exec("结果摘要:\n")
-            self._log_exec("-" * 80 + "\n")
-            self._log_exec(f"{'Input':>8} {'Output':>8} {'TTFT_avg':>10} {'TPOT_avg':>10} "
+            self._log_exec("-" * 110 + "\n")
+            self._log_exec(f"{'Input':>8} {'Output':>8} {'Max_CC':>8} {'CC':>8} "
+                          f"{'In_Tput':>10} {'Out_Tput':>10} {'TTFT_avg':>10} {'TPOT_avg':>10} "
                           f"{'QPS':>8} {'Ext_Hit%':>10}\n")
-            self._log_exec("-" * 80 + "\n")
+            self._log_exec("-" * 110 + "\n")
             for row in results:
                 self._log_exec(
                     f"{row.get('input_len',''):>8} {row.get('output_len',''):>8} "
+                    f"{str(row.get('max_cc','')):>8} {str(row.get('cc','')):>8} "
+                    f"{str(row.get('input_token_throughput','')):>10} {str(row.get('output_throughput','')):>10} "
                     f"{str(row.get('TTFT_avg','')):>10} {str(row.get('TPOT_avg','')):>10} "
                     f"{str(row.get('qps','')):>8} {str(row.get('external_hit_rate','')):>10}\n"
                 )
-            self._log_exec("-" * 80 + "\n")
+            self._log_exec("-" * 110 + "\n")
 
             self.root.after(0, lambda: messagebox.showinfo(
                 "完成",
