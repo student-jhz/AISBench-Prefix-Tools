@@ -10,7 +10,7 @@ class ConfigManager:
     """管理aisbench_auto_tools_prefix的config.py配置"""
 
     CONFIG_TEMPLATE = """# -*- coding: utf-8 -*-
-# AISBench 测试配置文件 (由AISBenchDeployer自动生成)
+# AISBench 测试配置文件 (由AISBench-Prefix-Tools自动生成)
 
 # 数据集文件夹路径，需可访问；选aisbench_auto_tools_prefix中包含GSM8k.jsonl数据集文件路径
 DATASET_PATH = "{dataset_path}"

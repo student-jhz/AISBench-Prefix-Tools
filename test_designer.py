@@ -222,7 +222,7 @@ class TestDesigner:
         lines = []
         lines.append("#!/bin/bash")
         lines.append("")
-        lines.append("# AISBench测试脚本 (由AISBenchDeployer生成)")
+        lines.append("# AISBench测试脚本 (由AISBench-Prefix-Tools生成)")
         lines.append(f"# 生成时间: {datetime.now()}")
         lines.append(f"# 单个DP组KV cache: {self.single_kv_cache:,} tokens")
         lines.append(f"# DP组数: {self.dp}")
