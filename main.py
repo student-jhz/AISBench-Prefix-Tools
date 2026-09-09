@@ -534,9 +534,35 @@ class WizardApp:
         self._build_step_header(frame, "步骤 3: Docker部署",
                                "上传文件、加载镜像、创建容器")
 
+        # 远程工作目录
+        workdir_frame = tk.Frame(frame, bg=COLOR_CARD, relief=tk.SOLID, bd=1)
+        workdir_frame.pack(fill=tk.X, pady=(8, 4))
+
+        tk.Label(workdir_frame, text="远程工作目录:", bg=COLOR_CARD, fg=COLOR_TEXT,
+               font=("Segoe UI", 9)).grid(row=0, column=0, sticky=tk.W, padx=16, pady=8)
+
+        self.work_dir_var = tk.StringVar(value="/tmp/AISBench_Prefix_Tools")
+        tk.Entry(workdir_frame, textvariable=self.work_dir_var, width=50,
+               font=("Segoe UI", 9)).grid(row=0, column=1, sticky=tk.EW, padx=8, pady=8)
+        workdir_frame.columnconfigure(1, weight=1)
+
+        self.work_dir_status = tk.Label(workdir_frame, text="", bg=COLOR_CARD,
+                                        fg=COLOR_TEXT_MUTED, font=("Segoe UI", 9))
+        self.work_dir_status.grid(row=0, column=2, padx=8, pady=8)
+
+        # 检查目录 + 清理目录 按钮
+        wd_btn_frame = tk.Frame(workdir_frame, bg=COLOR_CARD)
+        wd_btn_frame.grid(row=0, column=3, padx=(0, 16), pady=8)
+        tk.Button(wd_btn_frame, text="检查目录", font=("Segoe UI", 8),
+                command=self._check_work_dir).pack(side=tk.LEFT, padx=2)
+        self.clean_work_dir_btn = tk.Button(wd_btn_frame, text="清理目录", font=("Segoe UI", 8),
+                bg=COLOR_ERROR, fg="white", relief=tk.FLAT,
+                command=self._clean_work_dir, state=tk.DISABLED)
+        self.clean_work_dir_btn.pack(side=tk.LEFT, padx=2)
+
         # 部署信息展示
         info_frame = tk.Frame(frame, bg=COLOR_CARD, relief=tk.SOLID, bd=1)
-        info_frame.pack(fill=tk.X, pady=8)
+        info_frame.pack(fill=tk.X, pady=4)
 
         self.docker_info_labels = {}
         info_items = [
@@ -587,6 +613,86 @@ class WizardApp:
         """向日志缓冲区写入（线程安全，由主线程定时刷新到UI）"""
         self._log_buffer += text
 
+    def _check_work_dir(self):
+        """检查远程工作目录是否存在"""
+        if not self.ssh.connected:
+            messagebox.showwarning("提示", "请先连接到远程主机")
+            return
+
+        work_dir = self.work_dir_var.get().strip()
+        if not work_dir:
+            messagebox.showwarning("提示", "请输入远程工作目录路径")
+            return
+
+        # 临时设置 remote_work_base 来检查
+        if not self.docker:
+            self.docker = DockerManager(self.ssh)
+        self.docker.remote_work_base = work_dir
+
+        if self.docker.work_dir_exists():
+            # 目录已存在，检查内容
+            code, out, _ = self.ssh.execute(f"ls -A {work_dir} 2>/dev/null")
+            has_content = bool(out.strip())
+            if has_content:
+                self.work_dir_status.config(
+                    text="⚠ 已存在且有内容", fg=COLOR_ERROR)
+                self.clean_work_dir_btn.config(state=tk.NORMAL)
+                choice = messagebox.askyesnocancel(
+                    "目录已存在",
+                    f"远程目录已存在且有内容:\n{work_dir}\n\n"
+                    f"目录内容:\n{out[:200]}\n\n"
+                    f"是 - 清理目录（删除后重建）\n"
+                    f"否 - 更换为其他路径\n"
+                    f"取消 - 保持现状继续部署",
+                    icon=messagebox.WARNING)
+                if choice is True:
+                    self._do_clean_work_dir()
+                elif choice is None:
+                    self.work_dir_status.config(text="保持现状", fg=COLOR_TEXT_MUTED)
+            else:
+                self.work_dir_status.config(text="已存在(空)", fg=COLOR_SUCCESS)
+        else:
+            self.work_dir_status.config(text="不存在(将创建)", fg=COLOR_SUCCESS)
+            self.clean_work_dir_btn.config(state=tk.DISABLED)
+
+    def _do_clean_work_dir(self):
+        """执行清理工作目录"""
+        work_dir = self.work_dir_var.get().strip()
+        if not self.docker:
+            self.docker = DockerManager(self.ssh)
+        self.docker.remote_work_base = work_dir
+
+        if not self.docker.work_dir_exists():
+            self.work_dir_status.config(text="目录不存在，无需清理", fg=COLOR_TEXT_MUTED)
+            return
+
+        # 如果有容器在运行，先停止
+        if self.docker.container_name and self.docker.container_is_running():
+            self.docker.stop_and_remove()
+
+        ok = self.docker.clean_work_dir()
+        if ok:
+            self.work_dir_status.config(text="已清理", fg=COLOR_SUCCESS)
+            messagebox.showinfo("成功", f"已清理: {work_dir}")
+        else:
+            self.work_dir_status.config(text="清理失败", fg=COLOR_ERROR)
+            messagebox.showerror("失败", f"清理失败: {work_dir}")
+
+    def _clean_work_dir(self):
+        """清理工作目录按钮回调"""
+        if not self.ssh.connected:
+            messagebox.showwarning("提示", "请先连接到远程主机")
+            return
+
+        work_dir = self.work_dir_var.get().strip()
+        if not messagebox.askyesno("确认清理",
+                                   f"确定要清理远程工作目录吗?\n\n{work_dir}\n\n"
+                                   f"这将删除目录下所有文件（镜像tar、代码、日志等），\n"
+                                   f"并停止正在运行的容器。",
+                                   icon=messagebox.WARNING):
+            return
+        self._do_clean_work_dir()
+
     def _flush_log_buffer(self):
         """主线程定时刷新部署日志缓冲区到UI（每200ms）"""
         if self._log_buffer:
@@ -617,16 +723,43 @@ class WizardApp:
         tar = self.tar_path.get().strip()
         zipf = self.zip_path.get().strip()
         model = self.model_path_var.get().strip()
+        work_dir = self.work_dir_var.get().strip()
 
         if not tar or not zipf or not model:
             messagebox.showwarning("提示", "请先完成文件和模型路径选择")
             return
+        if not work_dir:
+            messagebox.showwarning("提示", "请输入远程工作目录路径")
+            return
+
+        # 部署前检查工作目录
+        self.docker = DockerManager(self.ssh)
+        self.docker.remote_work_base = work_dir
+        if self.docker.work_dir_exists():
+            code, out, _ = self.ssh.execute(f"ls -A {work_dir} 2>/dev/null")
+            if out.strip():
+                choice = messagebox.askyesnocancel(
+                    "工作目录已存在",
+                    f"远程工作目录已存在且有内容:\n{work_dir}\n\n"
+                    f"是 - 清理目录后继续部署\n"
+                    f"否 - 使用当前目录直接部署（覆盖同名文件）\n"
+                    f"取消 - 终止部署",
+                    icon=messagebox.WARNING)
+                if choice is True:
+                    # 清理目录
+                    if self.docker.container_name and self.docker.container_is_running():
+                        self.docker.stop_and_remove()
+                    self.docker.clean_work_dir()
+                elif choice is None:
+                    return
+                # choice is False: 直接部署
 
         self._cancel_flag.clear()
         self._log_buffer = ""
         self.docker_log.delete(1.0, tk.END)
         self.deploy_btn.config(state=tk.DISABLED, text="部署中...")
         self.cancel_deploy_btn.config(state=tk.NORMAL)
+        self.clean_work_dir_btn.config(state=tk.DISABLED)
 
         # 启动定时刷新日志
         if self._flush_timer_id:
@@ -639,6 +772,7 @@ class WizardApp:
             def _restore():
                 self.deploy_btn.config(state=tk.NORMAL, text="重新部署")
                 self.cancel_deploy_btn.config(state=tk.DISABLED)
+                self.clean_work_dir_btn.config(state=tk.NORMAL)
                 # 最后刷新一次确保所有日志已输出
                 if self._log_buffer:
                     self.docker_log.insert(tk.END, self._log_buffer)
@@ -654,8 +788,10 @@ class WizardApp:
 
     def _deploy_sequence(self, tar_path, zip_path, model_path):
         """部署序列"""
-        # 初始化DockerManager
-        self.docker = DockerManager(self.ssh)
+        # DockerManager已在_start_deploy中初始化，保持remote_work_base设置
+        work_dir = self.work_dir_var.get().strip()
+        if work_dir:
+            self.docker.remote_work_base = work_dir
 
         # Step 1: 检查Docker
         self._log_docker("[1/4] 检查Docker环境...\n")

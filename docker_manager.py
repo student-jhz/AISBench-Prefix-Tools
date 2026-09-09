@@ -30,6 +30,24 @@ class DockerManager:
             return True, out.strip()
         return False, f"Docker未安装或不在PATH中: {err}"
 
+    def work_dir_exists(self) -> bool:
+        """检查远程工作目录是否已存在"""
+        return self.ssh.file_exists(self.remote_work_base)
+
+    def clean_work_dir(self, callback: Callable[[str], None] = None) -> bool:
+        """清理远程工作目录"""
+        if callback:
+            callback(f"清理工作目录: {self.remote_work_base}\n")
+        code, _, _ = self.ssh.execute(f"rm -rf {self.remote_work_base}")
+        if code == 0:
+            self.ssh.mkdir_p(self.remote_work_base)
+            if callback:
+                callback("  ✓ 清理完成\n")
+            return True
+        if callback:
+            callback("  ✗ 清理失败\n")
+        return False
+
     @staticmethod
     def get_image_name_from_tar(local_tar_path: str) -> Optional[str]:
         """
