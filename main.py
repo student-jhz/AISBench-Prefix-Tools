@@ -525,27 +525,40 @@ class WizardApp:
         frame = self.step_frames[2]
 
         self._build_step_header(frame, "步骤 3: Docker部署",
-                               "上传文件、加载镜像、创建容器")
+                               "确认部署参数，上传文件、加载镜像、创建容器")
 
-        # 部署信息展示
+        # 部署参数（可编辑，从步骤2自动填充）
         info_frame = tk.Frame(frame, bg=COLOR_CARD, relief=tk.SOLID, bd=1)
         info_frame.pack(fill=tk.X, pady=8)
 
-        self.docker_info_labels = {}
-        info_items = [
-            ("镜像文件:", "tar"),
-            ("代码包:", "zip"),
-            ("模型路径:", "model"),
-            ("容器名称:", "container"),
-            ("镜像名称:", "image"),
+        # 可编辑字段
+        editable_items = [
+            ("镜像 tar 包路径:", "deploy_tar", None),
+            ("代码 zip 包路径:", "deploy_zip", None),
+            ("模型路径 (远程):", "deploy_model", None),
+            ("容器名称:", "deploy_container", None),
         ]
-        for i, (label, key) in enumerate(info_items):
-            tk.Label(info_frame, text=label, bg=COLOR_CARD, fg=COLOR_TEXT_MUTED,
-                   font=("Segoe UI", 9)).grid(row=i, column=0, sticky=tk.W, padx=16, pady=4)
-            val_lbl = tk.Label(info_frame, text="-", bg=COLOR_CARD, fg=COLOR_TEXT,
-                             font=("Segoe UI", 9))
-            val_lbl.grid(row=i, column=1, sticky=tk.W, padx=16, pady=4)
-            self.docker_info_labels[key] = val_lbl
+
+        self.deploy_vars = {}
+        for i, (label, key, default) in enumerate(editable_items):
+            tk.Label(info_frame, text=label, bg=COLOR_CARD, fg=COLOR_TEXT,
+                   font=("Segoe UI", 9)).grid(row=i, column=0, sticky=tk.W, padx=16, pady=6)
+            var = tk.StringVar(value=default or "")
+            self.deploy_vars[key] = var
+            entry = tk.Entry(info_frame, textvariable=var, width=60,
+                           font=("Segoe UI", 9))
+            entry.grid(row=i, column=1, sticky=tk.EW, padx=16, pady=6)
+
+        # 镜像名称（只读，docker load后自动识别）
+        tk.Label(info_frame, text="镜像名称:", bg=COLOR_CARD, fg=COLOR_TEXT_MUTED,
+               font=("Segoe UI", 9)).grid(row=len(editable_items), column=0,
+                                          sticky=tk.W, padx=16, pady=6)
+        self.deploy_image_var = tk.StringVar(value="(docker load后自动识别)")
+        self.deploy_image_lbl = tk.Label(info_frame, textvariable=self.deploy_image_var,
+                                         bg=COLOR_CARD, fg=COLOR_TEXT_MUTED,
+                                         font=("Segoe UI", 9))
+        self.deploy_image_lbl.grid(row=len(editable_items), column=1,
+                                    sticky=tk.W, padx=16, pady=6)
 
         info_frame.columnconfigure(1, weight=1)
 
@@ -574,30 +587,49 @@ class WizardApp:
         self.docker_log.insert(tk.END, text)
         self.docker_log.see(tk.END)
 
+    def _sync_deploy_vars(self):
+        """从步骤2同步部署参数到步骤3的编辑框"""
+        self.deploy_vars["deploy_tar"].set(self.tar_path.get())
+        self.deploy_vars["deploy_zip"].set(self.zip_path.get())
+        self.deploy_vars["deploy_model"].set(self.model_path_var.get())
+        # 容器名：如已有则保留，否则自动生成
+        if not self.deploy_vars["deploy_container"].get():
+            from docker_manager import DockerManager
+            self.deploy_vars["deploy_container"].set(DockerManager(self.ssh).generate_container_name())
+        # 镜像名：如已load过则保留
+        if not self.docker or not self.docker.image_name:
+            self.deploy_image_var.set("(docker load后自动识别)")
+        else:
+            self.deploy_image_var.set(self.docker.image_name)
+
     def _start_deploy(self):
         """开始部署流程"""
         if not self.ssh.connected:
             messagebox.showwarning("提示", "请先连接到远程主机")
             return
 
-        tar = self.tar_path.get().strip()
-        zipf = self.zip_path.get().strip()
-        model = self.model_path_var.get().strip()
+        tar = self.deploy_vars["deploy_tar"].get().strip()
+        zipf = self.deploy_vars["deploy_zip"].get().strip()
+        model = self.deploy_vars["deploy_model"].get().strip()
+        container_name = self.deploy_vars["deploy_container"].get().strip()
 
         if not tar or not zipf or not model:
-            messagebox.showwarning("提示", "请先完成文件和模型路径选择")
+            messagebox.showwarning("提示", "镜像tar包、代码zip包和模型路径不能为空")
+            return
+        if not container_name:
+            messagebox.showwarning("提示", "容器名称不能为空")
             return
 
         self.deploy_btn.config(state=tk.DISABLED, text="部署中...")
         self.docker_log.delete(1.0, tk.END)
 
         def _do_deploy():
-            self._deploy_sequence(tar, zipf, model)
+            self._deploy_sequence(tar, zipf, model, container_name)
             self.root.after(0, lambda: self.deploy_btn.config(state=tk.NORMAL, text="重新部署"))
 
         threading.Thread(target=_do_deploy, daemon=True).start()
 
-    def _deploy_sequence(self, tar_path, zip_path, model_path):
+    def _deploy_sequence(self, tar_path, zip_path, model_path, container_name):
         """部署序列"""
         # 初始化DockerManager
         self.docker = DockerManager(self.ssh)
@@ -615,7 +647,6 @@ class WizardApp:
         tar_name = os.path.basename(tar_path)
         self.remote_tar_path = f"{self.docker.remote_work_base}/{tar_name}"
         self.ssh.mkdir_p(self.docker.remote_work_base)
-        self.docker_info_labels["tar"].config(text=tar_name)
 
         def _upload_progress(transferred, total):
             pct = transferred * 100 // total if total > 0 else 0
@@ -639,7 +670,8 @@ class WizardApp:
         if not ok:
             self._log_docker(f"  ✗ 镜像加载失败: {image_name}\n")
             return
-        self.docker_info_labels["image"].config(text=image_name)
+        self.deploy_image_var.set(image_name)
+        self.deploy_image_lbl.config(fg=COLOR_TEXT)
         self._log_docker("\n")
 
         # Step 4: 上传并解压代码zip
@@ -662,12 +694,10 @@ class WizardApp:
             return
 
         self.code_host_path = extracted_path
-        self.docker_info_labels["zip"].config(text=extracted_path)
         self._log_docker(f"  ✓ 代码解压到: {extracted_path}\n\n")
 
         # Step 5: 创建容器
         self._log_docker("[5/5] 创建并启动容器...\n")
-        container_name = self.docker.generate_container_name()
         ok, msg = self.docker.create_container(
             image_name, model_path, extracted_path, container_name,
             callback=lambda t: self.root.after(0, lambda: self._log_docker(t))
@@ -676,8 +706,6 @@ class WizardApp:
             self._log_docker(f"  ✗ {msg}\n")
             return
 
-        self.docker_info_labels["container"].config(text=container_name)
-        self.docker_info_labels["model"].config(text=model_path)
         self._log_docker(f"\n  ✓ 容器 {container_name} 已启动运行\n")
         self._log_docker(f"  ✓ 部署完成!\n")
 
@@ -1192,6 +1220,8 @@ class WizardApp:
             self.next_btn.config(text="下一步 >", command=self._next_step)
 
         # 步骤特定的刷新
+        if step == 2:
+            self._sync_deploy_vars()
         if step == 3:
             self._sync_config_vars()
         if step == 5:
