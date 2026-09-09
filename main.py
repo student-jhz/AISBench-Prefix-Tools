@@ -60,6 +60,16 @@ class WizardApp:
         self.root.minsize(900, 600)
         self.root.configure(bg=COLOR_BG)
 
+        # 设置窗口图标
+        icon_path = os.path.join(
+            getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__))),
+            "app.ico")
+        if os.path.exists(icon_path):
+            try:
+                self.root.iconbitmap(icon_path)
+            except Exception:
+                pass
+
         # 核心组件
         self.ssh = SSHManager()
         self.docker: Optional[DockerManager] = None

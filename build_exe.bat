@@ -8,7 +8,7 @@ pip install -r requirements.txt
 
 echo.
 echo Building EXE...
-pyinstaller --noconfirm --onefile --windowed --name "AISBench-Prefix-Tools" --add-data "requirements.txt;." main.py
+pyinstaller --noconfirm --onefile --windowed --name "AISBench-Prefix-Tools" --icon=app.ico --add-data "requirements.txt;." --add-data "app.ico;." main.py
 
 echo.
 echo Build complete! Check dist\ folder for AISBench-Prefix-Tools.exe
