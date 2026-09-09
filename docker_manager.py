@@ -21,7 +21,7 @@ class DockerManager:
         self.image_name: Optional[str] = None
         self.code_mount_path = "/benchmark/ais_bench/aisbench_auto_tools_prefix-main"
         self.code_host_path = ""
-        self.remote_work_base = "/tmp/aisbench_deploy"
+        self.remote_work_base = "/tmp/AISBench_Prefix_Tools"
 
     def check_docker_installed(self) -> Tuple[bool, str]:
         """检查Docker是否安装"""
@@ -313,7 +313,7 @@ class DockerManager:
     def find_latest_log_dir(self) -> Optional[str]:
         """
         查找最新的 test_logs_* 目录（宿主机路径）
-        返回宿主机路径，如 /tmp/aisbench_deploy/aisbench_auto_tools_prefix-main/test_logs_20260909_200012
+        返回宿主机路径，如 /tmp/AISBench_Prefix_Tools/aisbench_auto_tools_prefix-main/test_logs_20260909_200012
         """
         code, out, _ = self.ssh.execute(
             f"ls -dt {self.code_host_path}/test_logs_*/ 2>/dev/null | head -1"
