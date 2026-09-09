@@ -658,7 +658,7 @@ class WizardApp:
         self.docker = DockerManager(self.ssh)
 
         # Step 1: 检查Docker
-        self._log_docker("[1/5] 检查Docker环境...\n")
+        self._log_docker("[1/4] 检查Docker环境...\n")
         ok, msg = self.docker.check_docker_installed()
         if not ok:
             self._log_docker(f"  ✗ {msg}\n")
@@ -669,46 +669,61 @@ class WizardApp:
             self._log_docker("  ⚹ 已取消\n")
             return
 
-        # Step 2: 上传镜像tar
-        self._log_docker("[2/5] 上传镜像tar包...\n")
+        # Step 2: 检查镜像是否已存在，避免重复上传和加载
+        self._log_docker("[2/4] 检查镜像是否已存在...\n")
         tar_name = os.path.basename(tar_path)
-        self.remote_tar_path = f"{self.docker.remote_work_base}/{tar_name}"
-        self.ssh.mkdir_p(self.docker.remote_work_base)
         self.root.after(0, lambda: self.docker_info_labels["tar"].config(text=tar_name))
 
-        def _upload_progress(transferred, total):
-            pct = transferred * 100 // total if total > 0 else 0
-            self._log_docker(f"\r  上传中: {transferred//1024//1024}MB / {total//1024//1024}MB ({pct}%)")
+        # 从本地tar包读取镜像名（不上传，直接读manifest.json）
+        image_name = DockerManager.get_image_name_from_tar(tar_path)
 
-        ok = self.ssh.upload_file(tar_path, self.remote_tar_path, _upload_progress)
-        self._log_docker("\n")
-        if not ok:
-            self._log_docker("  ✗ 镜像上传失败\n")
-            return
-        self._log_docker("  ✓ 镜像上传完成\n\n")
+        if image_name and self.docker.image_exists(image_name):
+            # 镜像已存在，跳过上传和加载
+            self._log_docker(f"  ✓ 镜像已存在: {image_name}\n")
+            self._log_docker(f"  → 跳过上传和docker load\n\n")
+            self.docker.image_name = image_name
+        else:
+            # 镜像不存在，需要上传和加载
+            if image_name:
+                self._log_docker(f"  镜像 {image_name} 不存在，需要上传并加载\n")
+            else:
+                self._log_docker(f"  无法从tar包预读镜像名，将上传后由docker load识别\n")
 
-        if self._cancel_flag.is_set():
-            self._log_docker("  ⚹ 已取消\n")
-            return
+            tar_size = os.path.getsize(tar_path)
+            self._log_docker(f"  上传镜像tar包 ({tar_size//1024//1024}MB)...\n")
+            self.remote_tar_path = f"{self.docker.remote_work_base}/{tar_name}"
+            self.ssh.mkdir_p(self.docker.remote_work_base)
 
-        # Step 3: Docker load
-        self._log_docker("[3/5] 加载Docker镜像...\n")
-        ok, image_name = self.docker.load_image(
-            self.remote_tar_path,
-            callback=lambda t: self._log_docker(t)  # 直接写缓冲区，不经过after
-        )
-        if not ok:
-            self._log_docker(f"  ✗ 镜像加载失败: {image_name}\n")
-            return
+            def _upload_progress(transferred, total):
+                pct = transferred * 100 // total if total > 0 else 0
+                self._log_docker(f"\r  上传中: {transferred//1024//1024}MB / {total//1024//1024}MB ({pct}%)")
+
+            ok = self.ssh.upload_file(tar_path, self.remote_tar_path, _upload_progress)
+            self._log_docker("\n")
+            if not ok:
+                self._log_docker("  ✗ 镜像上传失败\n")
+                return
+            self._log_docker("  ✓ 镜像上传完成\n")
+
+            # Docker load
+            self._log_docker("  加载Docker镜像...\n")
+            ok, image_name = self.docker.load_image(
+                self.remote_tar_path,
+                callback=lambda t: self._log_docker(t)
+            )
+            if not ok:
+                self._log_docker(f"  ✗ 镜像加载失败: {image_name}\n")
+                return
+            self._log_docker("\n")
+
         self.root.after(0, lambda n=image_name: self.docker_info_labels["image"].config(text=n))
-        self._log_docker("\n")
 
         if self._cancel_flag.is_set():
             self._log_docker("  ⚹ 已取消\n")
             return
 
-        # Step 4: 上传并解压代码zip
-        self._log_docker("[4/5] 上传并解压代码包...\n")
+        # Step 3: 上传并解压代码zip
+        self._log_docker("[3/4] 上传并解压代码包...\n")
         zip_name = os.path.basename(zip_path)
         self.remote_zip_path = f"{self.docker.remote_work_base}/{zip_name}"
 
@@ -735,7 +750,7 @@ class WizardApp:
             return
 
         # Step 5: 创建容器
-        self._log_docker("[5/5] 创建并启动容器...\n")
+        self._log_docker("[4/4] 创建并启动容器...\n")
         container_name = self.docker.generate_container_name()
         ok, msg = self.docker.create_container(
             image_name, model_path, extracted_path, container_name,

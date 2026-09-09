@@ -5,6 +5,8 @@ Docker管理器 - 通过SSH管理远程Docker容器
 import re
 import time
 import os
+import json
+import tarfile
 from datetime import datetime
 from typing import Optional, Tuple, List, Callable
 from ssh_manager import SSHManager
@@ -27,6 +29,37 @@ class DockerManager:
         if code == 0:
             return True, out.strip()
         return False, f"Docker未安装或不在PATH中: {err}"
+
+    @staticmethod
+    def get_image_name_from_tar(local_tar_path: str) -> Optional[str]:
+        """
+        从本地tar包中读取镜像名（不上传，不加载）
+        通过读取tar内的 manifest.json 获取 RepoTags
+        """
+        try:
+            with tarfile.open(local_tar_path, 'r') as tar:
+                # 尝试读取 manifest.json
+                for member in tar.getnames():
+                    if member == 'manifest.json' or member.endswith('/manifest.json'):
+                        f = tar.extractfile(member)
+                        if f:
+                            data = json.loads(f.read())
+                            if isinstance(data, list) and data:
+                                repo_tags = data[0].get('RepoTags', [])
+                                if repo_tags:
+                                    return repo_tags[0]
+                        break
+        except Exception as e:
+            print(f"读取tar包manifest失败: {e}")
+        return None
+
+    def image_exists(self, image_name: str) -> bool:
+        """检查远程是否已存在指定镜像"""
+        # 精确匹配 Repository:Tag
+        code, out, _ = self.ssh.execute(
+            f"docker images --format '{{{{.Repository}}}}:{{{{.Tag}}}}' | grep -ix '{image_name}'"
+        )
+        return bool(out.strip())
 
     def load_image(self, remote_tar_path: str,
                    callback: Callable[[str], None] = None) -> Tuple[bool, str]:
