@@ -1038,14 +1038,33 @@ class WizardApp:
         self._build_step_header(frame, "步骤 5: 设计测试用例",
                                "根据KV cache信息生成测试参数")
 
+        # 计算公式说明
+        formula_frame = tk.Frame(frame, bg=COLOR_CARD, relief=tk.SOLID, bd=1)
+        formula_frame.pack(fill=tk.X, pady=8)
+
+        tk.Label(formula_frame, text="计算公式:", bg=COLOR_CARD, fg=COLOR_TEXT,
+               font=("Segoe UI", 9, "bold")).grid(row=0, column=0, sticky=tk.W,
+                                                   padx=16, pady=(8, 2))
+
+        formulas = [
+            "并发数 = floor( total_kv_cache / (input_len + output_len) × 0.9 )",
+            "最小请求数 = max( floor(2 × total_kv_cache / input_len / repeat_rate) + 1, 并发数 × 2 )",
+            "推荐请求数 = 最小请求数 × 2",
+            "KV使用率 = 并发数 × (input_len + output_len) / total_kv_cache × 100%",
+        ]
+        for i, f in enumerate(formulas):
+            tk.Label(formula_frame, text=f"  {f}", bg=COLOR_CARD, fg=COLOR_TEXT_MUTED,
+                   font=("Consolas", 8)).grid(row=i+1, column=0, sticky=tk.W,
+                                               padx=16, pady=1)
+
         # KV Cache信息输入
         kv_frame = tk.Frame(frame, bg=COLOR_CARD, relief=tk.SOLID, bd=1)
-        kv_frame.pack(fill=tk.X, pady=8)
+        kv_frame.pack(fill=tk.X, pady=4)
 
         kv_fields = [
             ("单个DP组KV cache (tokens):", "kv_cache_var"),
             ("DP组数:", "dp_var"),
-            ("最大请求长度 (tokens):", "max_req_len_var"),
+            ("模型最大上下文 (tokens):", "max_req_len_var"),
             ("前缀命中率 (0-1):", "repeat_rate_var"),
             ("请求发送速率 (0=Burst):", "request_rate_var"),
         ]
@@ -1060,15 +1079,23 @@ class WizardApp:
         # 输入长度选择
         in_frame = tk.Frame(frame, bg=COLOR_CARD, relief=tk.SOLID, bd=1)
         in_frame.pack(fill=tk.X, pady=4)
-        tk.Label(in_frame, text="输入长度 (小于最大请求长度):", bg=COLOR_CARD,
+        tk.Label(in_frame, text="输入长度 (需小于模型最大上下文):", bg=COLOR_CARD,
                fg=COLOR_TEXT, font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, padx=16, pady=(8, 4))
 
         in_checks_frame = tk.Frame(in_frame, bg=COLOR_CARD)
         in_checks_frame.pack(padx=16, pady=(0, 8), fill=tk.X)
+
+        def _fmt_len(n):
+            if n >= 1048576:
+                return f"{n//1048576}M"
+            elif n >= 1024:
+                return f"{n//1024}K"
+            return str(n)
+
         for length in TestDesigner.PRESET_INPUT_LENGTHS:
             var = tk.BooleanVar(value=False)
             self.input_length_vars[length] = var
-            cb = tk.Checkbutton(in_checks_frame, text=str(length), variable=var,
+            cb = tk.Checkbutton(in_checks_frame, text=_fmt_len(length), variable=var,
                               bg=COLOR_CARD, font=("Segoe UI", 9))
             cb.pack(side=tk.LEFT, padx=4)
 
@@ -1083,7 +1110,7 @@ class WizardApp:
         for length in TestDesigner.PRESET_OUTPUT_LENGTHS:
             var = tk.BooleanVar(value=(length in [512, 1024]))
             self.output_length_vars[length] = var
-            cb = tk.Checkbutton(out_checks_frame, text=str(length), variable=var,
+            cb = tk.Checkbutton(out_checks_frame, text=_fmt_len(length), variable=var,
                               bg=COLOR_CARD, font=("Segoe UI", 9))
             cb.pack(side=tk.LEFT, padx=4)
 
@@ -1162,13 +1189,20 @@ class WizardApp:
 
     def _refresh_test_tree(self):
         """刷新测试用例表格"""
+        def _fmt(n):
+            if n >= 1048576:
+                return f"{n//1048576}M"
+            elif n >= 1024:
+                return f"{n//1024}K"
+            return str(n)
+
         for item in self.test_tree.get_children():
             self.test_tree.delete(item)
 
         for i, case in enumerate(self.designer.test_cases, 1):
             kv_usage = self.designer.get_kv_usage(case)
             self.test_tree.insert("", tk.END, values=(
-                i, f"{case.input_len:,}", f"{case.output_len:,}",
+                i, _fmt(case.input_len), _fmt(case.output_len),
                 f"{case.data_num_recommended:,}", f"{case.data_num_min:,}",
                 f"{case.concurrency_recommended:,}", f"{kv_usage:.1f}%"
             ))

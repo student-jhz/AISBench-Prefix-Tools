@@ -37,7 +37,7 @@ class TestCase:
 class TestDesigner:
     """测试用例设计器"""
 
-    PRESET_INPUT_LENGTHS = [8192, 16384, 32768, 65536, 131072]
+    PRESET_INPUT_LENGTHS = [8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576, 2097152]
     PRESET_OUTPUT_LENGTHS = [128, 256, 512, 1024, 2048]
 
     def __init__(self):
