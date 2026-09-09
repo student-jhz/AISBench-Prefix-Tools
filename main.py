@@ -1405,6 +1405,11 @@ class WizardApp:
                  command=self._execute_tests)
         self.exec_test_btn.pack(side=tk.LEFT, padx=8)
 
+        self.cleanup_btn = tk.Button(btn_frame, text="清理环境", bg=COLOR_ERROR, fg="white",
+                 font=("Segoe UI", 9), relief=tk.FLAT, padx=12, pady=4,
+                 command=self._cleanup_environment, state=tk.DISABLED)
+        self.cleanup_btn.pack(side=tk.LEFT, padx=8)
+
         # 执行日志
         tk.Label(frame, text="执行日志:", bg=COLOR_BG, fg=COLOR_TEXT,
                font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(8, 4))
@@ -1457,6 +1462,9 @@ class WizardApp:
             self._run_test_sequence(local_dir)
             def _restore():
                 self.exec_test_btn.config(state=tk.NORMAL, text="执行测试 → 生成CSV")
+                # 启用清理按钮
+                if self.docker and self.docker.container_name:
+                    self.cleanup_btn.config(state=tk.NORMAL)
                 # 最后刷新一次
                 if self._exec_log_buffer:
                     self.exec_log.insert(tk.END, self._exec_log_buffer)
@@ -1465,6 +1473,8 @@ class WizardApp:
                 if self._exec_flush_timer_id:
                     self.root.after_cancel(self._exec_flush_timer_id)
                     self._exec_flush_timer_id = None
+                # 测试完成后提醒清理
+                self.root.after(200, self._show_cleanup_reminder)
             self.root.after(0, _restore)
 
         threading.Thread(target=_do_execute, daemon=True).start()
@@ -1614,6 +1624,81 @@ class WizardApp:
         """向执行日志缓冲区写入（线程安全，由主线程定时刷新）"""
         self._exec_log_buffer += text
 
+    def _show_cleanup_reminder(self):
+        """测试完成后提醒清理远程环境"""
+        if not self.docker or not self.docker.container_name:
+            return
+
+        work_dir = self.work_dir_var.get().strip()
+        msg = "测试已完成! 建议清理远程环境:\n\n"
+        msg += f"  - Docker容器: {self.docker.container_name}\n"
+        if work_dir:
+            msg += f"  - 远程工作目录: {work_dir}\n"
+        msg += "\n是否立即清理?\n"
+        msg += "(是: 停止并删除容器 + 清理工作目录, 本地结果不受影响)\n"
+        msg += "(否: 稍后可点击\"清理环境\"按钮手动清理)"
+
+        if messagebox.askyesno("清理提醒", msg, icon=messagebox.QUESTION):
+            self._cleanup_environment()
+
+    def _cleanup_environment(self, skip_confirm=False):
+        """清理Docker容器和远程工作目录"""
+        if not self.docker:
+            return
+
+        work_dir = self.work_dir_var.get().strip()
+
+        if not skip_confirm:
+            msg = "确认清理以下远程资源?\n\n"
+            if self.docker.container_name:
+                msg += f"  Docker容器: {self.docker.container_name}\n"
+            if work_dir:
+                msg += f"  远程工作目录: {work_dir}\n"
+            msg += "\n清理后容器将停止删除, 工作目录文件将被清除。\n"
+            msg += "本地下载的测试结果不受影响。\n"
+            if not messagebox.askyesno("确认清理", msg, icon=messagebox.WARNING):
+                return
+
+        self.cleanup_btn.config(state=tk.DISABLED, text="清理中...")
+
+        def _do_cleanup():
+            self._log_exec("\n===== 清理远程环境 =====\n")
+
+            # 1. 停止并删除容器
+            if self.docker.container_name:
+                self._log_exec(f"  停止并删除容器: {self.docker.container_name}\n")
+                self.docker.stop_and_remove(callback=lambda t: self._log_exec(t))
+                self._log_exec("  ✓ 容器已清理\n")
+            else:
+                self._log_exec("  (无容器需要清理)\n")
+
+            # 2. 清理工作目录
+            if work_dir:
+                self.docker.remote_work_base = work_dir
+                self._log_exec(f"  清理工作目录: {work_dir}\n")
+                ok = self.docker.clean_work_dir(callback=lambda t: self._log_exec(t))
+                if ok:
+                    self._log_exec("  ✓ 工作目录已清理\n")
+                else:
+                    self._log_exec("  ✗ 工作目录清理失败\n")
+
+            self._log_exec("\n✓ 环境清理完成!\n")
+            local_dir = self.local_output_var.get().strip()
+            self._log_exec(f"  本地测试结果保留在: {local_dir}\n")
+
+            def _restore_cleanup():
+                self.cleanup_btn.config(state=tk.DISABLED, text="清理环境")
+                if getattr(self, '_exit_after_cleanup', False):
+                    self.ssh.disconnect()
+                    self.root.destroy()
+                else:
+                    messagebox.showinfo("清理完成",
+                        "环境清理完成!\n容器和工作目录已清理。\n本地测试结果不受影响。")
+
+            self.root.after(0, _restore_cleanup)
+
+        threading.Thread(target=_do_cleanup, daemon=True).start()
+
     # ============================================================
     #  导航逻辑
     # ============================================================
@@ -1655,6 +1740,8 @@ class WizardApp:
             self._sync_config_vars()
         if step == 5:
             self._refresh_commands()
+            if hasattr(self, 'cleanup_btn') and self.docker and self.docker.container_name:
+                self.cleanup_btn.config(state=tk.NORMAL)
 
     def _next_step(self):
         """下一步"""
@@ -1680,6 +1767,25 @@ class WizardApp:
 
     def _finish(self):
         """完成"""
+        # 检查容器是否仍在运行
+        if self.docker and self.docker.container_name and self.docker.container_is_running():
+            msg = "检测到Docker容器仍在运行!\n\n"
+            msg += f"  容器: {self.docker.container_name}\n"
+            work_dir = self.work_dir_var.get().strip()
+            if work_dir:
+                msg += f"  工作目录: {work_dir}\n"
+            msg += "\n退出前是否清理远程环境?\n"
+            msg += "(是: 清理后退出  否: 直接退出保留环境  取消: 不退出)"
+
+            choice = messagebox.askyesnocancel("清理提醒", msg, icon=messagebox.WARNING)
+            if choice is None:
+                return  # 取消 - 不退出
+            if choice:
+                # 清理后退出
+                self._exit_after_cleanup = True
+                self._cleanup_environment(skip_confirm=True)
+                return
+
         if messagebox.askyesno("完成", "测试已完成，是否退出程序?"):
             self.ssh.disconnect()
             self.root.destroy()
