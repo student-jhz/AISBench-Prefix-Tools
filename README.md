@@ -18,7 +18,7 @@ Windows 桌面工具，用于远程部署 AISBench 测试环境并自动设计/�
 ### 方式一：从源码直接运行（推荐先试这个）
 
 ```bash
-cd aisbench_deployer
+cd AISBench-Prefix-Tools
 pip install -r requirements.txt
 python main.py
 ```
@@ -28,7 +28,7 @@ python main.py
 打包后会生成 `dist/AISBenchDeployer.exe`，双击即可运行，**目标机器无需安装 Python**。
 
 ```bash
-cd aisbench_deployer
+cd AISBench-Prefix-Tools
 pip install -r requirements.txt
 build_exe.bat
 # 生成 dist/AISBenchDeployer.exe
