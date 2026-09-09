@@ -396,8 +396,8 @@ class WizardApp:
 
     def _browse_tar(self):
         path = filedialog.askopenfilename(
-            title="选择AISBench镜像tar包",
-            filetypes=[("tar files", "*.tar"), ("All files", "*.*")]
+            title="选择AISBench镜像包",
+            filetypes=[("tar.gz files", "*.tar.gz"), ("tar files", "*.tar"), ("All files", "*.*")]
         )
         if path:
             self.tar_path.set(path)
