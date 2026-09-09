@@ -810,6 +810,9 @@ class WizardApp:
         tar_name = os.path.basename(tar_path)
         self.root.after(0, lambda: self.docker_info_labels["tar"].config(text=tar_name))
 
+        # 确保工作目录存在（无论镜像是否已存在都需要）
+        self.ssh.mkdir_p(self.docker.remote_work_base)
+
         # 从本地tar包读取镜像名（不上传，直接读manifest.json）
         image_name = DockerManager.get_image_name_from_tar(tar_path)
 
@@ -828,7 +831,6 @@ class WizardApp:
             tar_size = os.path.getsize(tar_path)
             self._log_docker(f"  上传镜像tar包 ({tar_size//1024//1024}MB)...\n")
             self.remote_tar_path = f"{self.docker.remote_work_base}/{tar_name}"
-            self.ssh.mkdir_p(self.docker.remote_work_base)
 
             def _upload_progress(transferred, total):
                 pct = transferred * 100 // total if total > 0 else 0
