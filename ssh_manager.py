@@ -55,7 +55,13 @@ class SSHManager:
                 connect_kwargs['allow_agent'] = False
 
             self.client.connect(**connect_kwargs)
-            self.sftp = self.client.open_sftp()
+
+            # 设置大窗口以提高传输速度
+            transport = self.client.get_transport()
+            transport.default_window_size = 2147483647  # SSH最大窗口
+            transport.packetizer.MAX_PACKET_SIZE = 32768
+
+            self.sftp = transport.open_sftp_client()
             self.host = host
             self.port = port
             self.username = username
@@ -124,19 +130,27 @@ class SSHManager:
     def upload_file(self, local_path: str, remote_path: str,
                     progress_callback: Callable[[int, int], None] = None) -> bool:
         """
-        上传文件到远程主机
+        上传文件到远程主机（大窗口 + pipelined write，速度快数倍）
         """
         if not self._connected or not self.sftp:
             return False
 
         try:
             file_size = os.path.getsize(local_path)
+            chunk_size = 256 * 1024  # 256KB chunks
+            transferred = 0
 
-            def _callback(transferred, total):
-                if progress_callback:
-                    progress_callback(transferred, total)
-
-            self.sftp.put(local_path, remote_path, callback=_callback)
+            with open(local_path, 'rb') as fl:
+                with self.sftp.file(remote_path, 'wb') as fr:
+                    fr.set_pipelined(True)  # 开启管道写，大幅提升速度
+                    while True:
+                        data = fl.read(chunk_size)
+                        if not data:
+                            break
+                        fr.write(data)
+                        transferred += len(data)
+                        if progress_callback:
+                            progress_callback(transferred, file_size)
             return True
         except Exception as e:
             print(f"上传失败: {e}")
@@ -158,14 +172,10 @@ class SSHManager:
             if status_callback:
                 status_callback(f"开始上传: {os.path.basename(local_path)} ({file_size / 1024 / 1024:.1f}MB)")
 
-            def _callback(transferred, total):
-                if progress_callback:
-                    progress_callback(transferred, total)
-
-            self.sftp.put(local_path, remote_path, callback=_callback)
+            ok = self.upload_file(local_path, remote_path, progress_callback)
             if status_callback:
-                status_callback(f"上传完成: {remote_path}")
-            return True
+                status_callback(f"上传完成: {remote_path}" if ok else "上传失败")
+            return ok
         except Exception as e:
             if status_callback:
                 status_callback(f"上传失败: {e}")
