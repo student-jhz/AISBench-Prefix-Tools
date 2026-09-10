@@ -89,7 +89,7 @@ class TestDesigner:
 
         for input_len in self.input_lengths:
             for output_len in self.output_lengths:
-                max_concurrency = int(self.total_kv_cache / (input_len + output_len) * 0.9)
+                max_concurrency = int(self.total_kv_cache / (input_len + output_len))
                 max_concurrency = max(1, max_concurrency)
 
                 min_data_num = int(2 * self.total_kv_cache / input_len / self.repeat_rate) + 1
@@ -164,7 +164,7 @@ class TestDesigner:
     def add_custom_case(self, input_len: int, output_len: int,
                         data_num: int = None, concurrency: int = None):
         """添加自定义用例"""
-        max_concurrency = max(1, int(self.total_kv_cache / (input_len + output_len) * 0.9))
+        max_concurrency = max(1, int(self.total_kv_cache / (input_len + output_len)))
         min_data_num = max(
             int(2 * self.total_kv_cache / input_len / self.repeat_rate) + 1,
             max_concurrency * 2

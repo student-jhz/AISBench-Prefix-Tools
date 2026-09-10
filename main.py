@@ -1411,7 +1411,7 @@ class WizardApp:
                                                    padx=16, pady=(8, 2))
 
         formulas = [
-            "并发数 = floor( total_kv_cache / (input_len + output_len) × 0.9 )",
+            "并发数 = floor( total_kv_cache / (input_len + output_len) )",
             "最小请求数 = max( floor(2 × total_kv_cache / input_len / repeat_rate) + 1, 并发数 × 2 )",
             "推荐请求数 = 最小请求数 × 2",
             "KV使用率 = 并发数 × (input_len + output_len) / total_kv_cache × 100%",
@@ -1566,13 +1566,13 @@ class WizardApp:
         lines = []
         for i, case in enumerate(self.designer.test_cases, 1):
             total = case.input_len + case.output_len
-            max_cc_raw = kv / total * 0.9
+            max_cc_raw = kv / total
             min_req_raw = 2 * kv / case.input_len / rate + 1
             min_req = max(int(min_req_raw), case.concurrency_max * 2)
             rec_req = min_req * 2
             kv_usage = case.concurrency_recommended * total / kv * 100
             lines.append(f"用例{i}  input={case.input_len:,}  output={case.output_len:,}  dp={dp}  repeat_rate={rate*100:.0f}%")
-            lines.append(f"  并发数(公式) = floor({kv:,} / ({case.input_len:,}+{case.output_len:,}) × 0.9)")
+            lines.append(f"  并发数(公式) = floor({kv:,} / ({case.input_len:,}+{case.output_len:,}))")
             lines.append(f"              = floor({max_cc_raw:.2f}) = {case.concurrency_max}")
             if case.concurrency_recommended != case.concurrency_max:
                 lines.append(f"  并发数(实际) = {case.concurrency_recommended:,}  (用户手动调整)")
