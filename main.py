@@ -414,9 +414,24 @@ class WizardApp:
         tk.Label(form, text="密码", bg=COLOR_CARD, fg=COLOR_TEXT,
                font=("Segoe UI", 9)).grid(row=3, column=0, sticky=tk.W, padx=16, pady=8)
         self.conn_password = tk.StringVar()
-        pw_entry = tk.Entry(form, textvariable=self.conn_password, width=30,
+        pw_frame = tk.Frame(form, bg=COLOR_CARD)
+        pw_frame.grid(row=3, column=1, padx=16, pady=8, sticky=tk.W)
+        pw_entry = tk.Entry(pw_frame, textvariable=self.conn_password, width=30,
                           show="*", font=("Segoe UI", 9))
-        pw_entry.grid(row=3, column=1, padx=16, pady=8, sticky=tk.W)
+        pw_entry.pack(side=tk.LEFT)
+
+        def _toggle_pw():
+            if pw_entry.cget('show') == '*':
+                pw_entry.config(show='')
+                pw_eye_btn.config(text='🙈')
+            else:
+                pw_entry.config(show='*')
+                pw_eye_btn.config(text='👁')
+
+        pw_eye_btn = tk.Button(pw_frame, text='👁', font=("Segoe UI", 8),
+                               width=3, relief=tk.FLAT, bg=COLOR_CARD,
+                               fg=COLOR_TEXT_MUTED, command=_toggle_pw)
+        pw_eye_btn.pack(side=tk.LEFT, padx=(4, 0))
 
         tk.Label(form, text="或密钥文件路径", bg=COLOR_CARD, fg=COLOR_TEXT,
                font=("Segoe UI", 9)).grid(row=4, column=0, sticky=tk.W, padx=16, pady=8)
