@@ -119,6 +119,15 @@ class LiveLogHandler:
             self.has_pending = True
             self._pending_held = held
 
+    def _follow_tail(self):
+        """仅当视图位于底部时自动跟随最新内容; 用户向上翻动时不强制滚动"""
+        try:
+            first, last = self.widget.yview()
+        except Exception:
+            return
+        if last >= 0.999:
+            self.widget.see('end')
+
     def flush(self):
         with self._lock:
             if not self.raw:
@@ -152,7 +161,7 @@ class LiveLogHandler:
                         self._show_pending(tail_cleaned, held=False)
                 else:
                     self._show_pending(tail_cleaned, held=False)
-            self.widget.see('end')
+            self._follow_tail()
 
     def finalize(self):
         with self._lock:
@@ -164,7 +173,7 @@ class LiveLogHandler:
                 self.raw = ""
             if self.has_pending:
                 self._commit_pending()
-            self.widget.see('end')
+            self._follow_tail()
 
 
 class WizardApp:
