@@ -1824,33 +1824,9 @@ class WizardApp:
                                    relief=tk.SOLID, bd=1, anchor=tk.W, width=80, height=8)
         self.summary_text.pack(fill=tk.X, pady=8)
 
-        # 命令预览
-        tk.Label(frame, text="生成的测试命令:", bg=COLOR_BG, fg=COLOR_TEXT,
-               font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(8, 4))
-
-        self.commands_text = scrolledtext.ScrolledText(frame, height=5,
-                                                       font=("Consolas", 9),
-                                                       bg="#1e1e1e", fg="#d4d4d4")
-        self.commands_text.pack(fill=tk.X)
-
-        # 本地输出目录选择
-        out_frame = tk.Frame(frame, bg=COLOR_CARD, relief=tk.SOLID, bd=1)
-        out_frame.pack(fill=tk.X, pady=8)
-
-        tk.Label(out_frame, text="本地结果保存目录:", bg=COLOR_CARD, fg=COLOR_TEXT,
-               font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=12, pady=8)
-
-        self.local_output_var = tk.StringVar(
-            value=os.path.join(os.path.expanduser("~"), "aisbench_results")
-        )
-        tk.Entry(out_frame, textvariable=self.local_output_var, width=50,
-               font=("Segoe UI", 9)).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4, pady=8)
-        tk.Button(out_frame, text="浏览...", font=("Segoe UI", 8),
-                command=self._browse_local_output).pack(side=tk.LEFT, padx=(4, 12), pady=8)
-
-        # 执行按钮
+        # 底部固定: 执行按钮 + 输出目录
         btn_frame = tk.Frame(frame, bg=COLOR_BG)
-        btn_frame.pack(fill=tk.X, pady=4)
+        btn_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=4)
 
         tk.Button(btn_frame, text="刷新命令", font=("Segoe UI", 9),
                  command=self._refresh_commands).pack(side=tk.LEFT)
@@ -1864,14 +1840,45 @@ class WizardApp:
                  command=self._cleanup_environment, state=tk.DISABLED)
         self.cleanup_btn.pack(side=tk.LEFT, padx=8)
 
-        # 执行日志
-        tk.Label(frame, text="执行日志:", bg=COLOR_BG, fg=COLOR_TEXT,
-               font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(8, 4))
+        out_frame = tk.Frame(frame, bg=COLOR_CARD, relief=tk.SOLID, bd=1)
+        out_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=8)
 
-        self.exec_log = scrolledtext.ScrolledText(frame, height=8,
+        tk.Label(out_frame, text="本地结果保存目录:", bg=COLOR_CARD, fg=COLOR_TEXT,
+               font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=12, pady=8)
+
+        self.local_output_var = tk.StringVar(
+            value=os.path.join(os.path.expanduser("~"), "aisbench_results")
+        )
+        tk.Entry(out_frame, textvariable=self.local_output_var, width=50,
+                font=("Segoe UI", 9)).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4, pady=8)
+        tk.Button(out_frame, text="浏览...", font=("Segoe UI", 8),
+                command=self._browse_local_output).pack(side=tk.LEFT, padx=(4, 12), pady=8)
+
+        # 中部: 命令预览 + 执行日志 (拖拽分隔条调整占比, 各保留最小高度)
+        self.exec_paned = tk.PanedWindow(frame, orient=tk.VERTICAL,
+                                         sashrelief=tk.RAISED, sashwidth=6,
+                                         bg=COLOR_BORDER)
+        self.exec_paned.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+
+        # Pane 1: 命令预览
+        cmd_pane = tk.Frame(self.exec_paned, bg=COLOR_BG)
+        self.exec_paned.add(cmd_pane, minsize=100, stretch="always")
+        tk.Label(cmd_pane, text="生成的测试命令:", bg=COLOR_BG, fg=COLOR_TEXT,
+               font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(0, 4))
+        self.commands_text = scrolledtext.ScrolledText(cmd_pane, height=3,
+                                                       font=("Consolas", 9),
+                                                       bg="#1e1e1e", fg="#d4d4d4")
+        self.commands_text.pack(fill=tk.BOTH, expand=True)
+
+        # Pane 2: 执行日志
+        log_pane = tk.Frame(self.exec_paned, bg=COLOR_BG)
+        self.exec_paned.add(log_pane, minsize=120, stretch="always")
+        tk.Label(log_pane, text="执行日志:", bg=COLOR_BG, fg=COLOR_TEXT,
+               font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(4, 0))
+        self.exec_log = scrolledtext.ScrolledText(log_pane, height=4,
                                                   font=("Consolas", 9),
                                                   bg="#1e1e1e", fg="#d4d4d4")
-        self.exec_log.pack(fill=tk.BOTH, expand=True)
+        self.exec_log.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
 
     def _browse_local_output(self):
         path = filedialog.askdirectory(title="选择本地结果保存目录")
