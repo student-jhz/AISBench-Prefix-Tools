@@ -279,7 +279,7 @@ class TestDesigner:
             lines.append(f'echo "开始时间: $(date \'+%Y-%m-%d %H:%M:%S\')"')
             lines.append(f'echo "=========================================="')
             lines.append("")
-            log_name = f"test_{case.input_len}_{case.output_len}.log"
+            log_name = f"test_{i}_{case.input_len}_{case.output_len}.log"
             lines.append(f'{cmd} 2>&1 | tee -a "${{LOG_DIR}}/{log_name}"')
             lines.append(f'TEST_EXIT=${{PIPESTATUS[0]}}')
             lines.append(f'if [ "$TEST_EXIT" -eq 0 ]; then')
