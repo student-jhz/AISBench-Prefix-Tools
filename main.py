@@ -331,12 +331,31 @@ class WizardApp:
             self._content_canvas.configure(
                 scrollregion=self._content_canvas.bbox('all'))
 
-        def _sync_width(_event):
-            w = _event.width
-            self._content_canvas.itemconfig('inner', width=w)
+        # 内容不足一屏时撑满画布高度, 使 fill=BOTH/expand 的组件
+        # (如步骤6执行日志) 能随窗口弹性伸缩; 超出一屏时保持自然高度可滚动
+        self._natural_h = 0
+        self._viewport_h = 0
+        self._forced_h = 0
 
-        self.content_container.bind('<Configure>', _sync_scroll_region)
-        self._content_canvas.bind('<Configure>', _sync_width)
+        def _apply_height():
+            target = max(self._natural_h, self._viewport_h)
+            if target != self._forced_h:
+                self._forced_h = target
+                self._content_canvas.itemconfig('inner', height=target)
+
+        def _on_content_configure(_event):
+            if _event.height != self._forced_h:
+                self._natural_h = _event.height
+            _sync_scroll_region()
+            _apply_height()
+
+        def _on_canvas_configure(_event):
+            self._content_canvas.itemconfig('inner', width=_event.width)
+            self._viewport_h = _event.height
+            _apply_height()
+
+        self.content_container.bind('<Configure>', _on_content_configure)
+        self._content_canvas.bind('<Configure>', _on_canvas_configure)
 
         # 注: 不绑定全局滚轮, 界面整体不随滚轮滚动; 日志栏等Text组件
         # 在Windows下自带滚轮滚动。窗口过小时可通过右侧滚动条拖动。
