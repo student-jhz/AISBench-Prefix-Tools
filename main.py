@@ -510,8 +510,6 @@ class WizardApp:
                font=("Segoe UI", 9)).pack(side=tk.LEFT, fill=tk.X, expand=True)
         tk.Button(zip_frame, text="浏览...", command=self._browse_zip,
                 font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(4, 0))
-        tk.Button(zip_frame, text="从GitHub下载", command=self._download_github,
-                font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(4, 0))
         tk.Button(zip_frame, text="代码下载链接", command=lambda: self._open_link(
                 "https://github.com/rayn-zzz/aisbench_auto_tools_prefix"),
                 font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(4, 0))
@@ -576,30 +574,6 @@ class WizardApp:
         )
         if path:
             self.zip_path.set(path)
-
-    def _download_github(self):
-        """从GitHub下载代码zip包"""
-        url = "https://github.com/rayn-zzz/aisbench_auto_tools_prefix/archive/refs/heads/main.zip"
-        save_path = filedialog.asksaveasfilename(
-            title="保存代码zip包",
-            defaultextension=".zip",
-            initialfile="aisbench_auto_tools_prefix-main.zip"
-        )
-        if not save_path:
-            return
-
-        def _do_download():
-            try:
-                import urllib.request
-                urllib.request.urlretrieve(url, save_path)
-                self.root.after(0, lambda: (
-                    self.zip_path.set(save_path),
-                    messagebox.showinfo("成功", f"已下载到: {save_path}")
-                ))
-            except Exception as e:
-                self.root.after(0, lambda: messagebox.showerror("下载失败", str(e)))
-
-        threading.Thread(target=_do_download, daemon=True).start()
 
     def _browse_remote_model(self):
         """远程目录浏览对话框"""
