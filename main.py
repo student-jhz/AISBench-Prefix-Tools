@@ -327,32 +327,29 @@ class WizardApp:
         self._content_canvas.create_window((0, 0), window=self.content_container,
                                            anchor='nw', tags='inner')
 
-        def _sync_scroll_region(_event=None):
-            self._content_canvas.configure(
-                scrollregion=self._content_canvas.bbox('all'))
-
-        # 内容不足一屏时撑满画布高度, 使 fill=BOTH/expand 的组件
-        # (如步骤6执行日志) 能随窗口弹性伸缩; 超出一屏时保持自然高度可滚动
-        self._natural_h = 0
         self._viewport_h = 0
         self._forced_h = 0
 
-        def _apply_height():
-            target = max(self._natural_h, self._viewport_h)
+        # 内容不足一屏时撑满画布高度, 使 fill=BOTH/expand 的组件
+        # (如各步骤日志栏) 能随窗口弹性伸缩; 超出一屏时保持自然高度可滚动
+        def _apply_content_size():
+            req = self.content_container.winfo_reqheight()
+            target = max(req, self._viewport_h)
             if target != self._forced_h:
                 self._forced_h = target
                 self._content_canvas.itemconfig('inner', height=target)
+            self._content_canvas.configure(
+                scrollregion=self._content_canvas.bbox('all'))
+
+        self._apply_content_size = _apply_content_size
 
         def _on_content_configure(_event):
-            if _event.height != self._forced_h:
-                self._natural_h = _event.height
-            _sync_scroll_region()
-            _apply_height()
+            _apply_content_size()
 
         def _on_canvas_configure(_event):
             self._content_canvas.itemconfig('inner', width=_event.width)
             self._viewport_h = _event.height
-            _apply_height()
+            _apply_content_size()
 
         self.content_container.bind('<Configure>', _on_content_configure)
         self._content_canvas.bind('<Configure>', _on_canvas_configure)
@@ -1078,10 +1075,10 @@ class WizardApp:
         frame = self.step_frames[3]
 
         self._build_step_header(frame, "步骤 4: 配置 config.py",
-                               "配置aisbench_auto_tools_prefix的测试参数")
+                                "配置aisbench_auto_tools_prefix的测试参数")
 
         form = tk.Frame(frame, bg=COLOR_CARD, relief=tk.SOLID, bd=1)
-        form.pack(fill=tk.BOTH, expand=True, pady=8)
+        form.pack(fill=tk.X, pady=8)
 
         config_fields = [
             ("MODEL_NAME (模型名称)", "model_name", True),
@@ -1448,7 +1445,7 @@ class WizardApp:
                                                            font=("Consolas", 8),
                                                            bg="#f0f5ff", fg="#1e293b",
                                                            wrap=tk.WORD)
-        self.calc_detail_text.pack(fill=tk.X, padx=12, pady=(4, 8))
+        self.calc_detail_text.pack(fill=tk.BOTH, expand=True, padx=12, pady=(4, 8))
         self.calc_detail_text.insert("1.0", "(点击\"生成测试用例\"后显示详细计算过程)")
 
     def _show_calc_details(self):
@@ -2051,9 +2048,10 @@ class WizardApp:
 
         self.current_step = step
 
-        # 切换步骤时内容区回到顶部
+        # 切换步骤后重新同步内容区高度(等pack布局完成), 并回到顶部
         if hasattr(self, '_content_canvas'):
             self._content_canvas.yview_moveto(0)
+            self._content_canvas.after_idle(self._apply_content_size)
 
         # 更新侧边栏
         for i, (indicator, label) in enumerate(self.step_buttons):
