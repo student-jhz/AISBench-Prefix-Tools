@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AISBench Deployer - Windows GUI应用程序
+AISBenchPrefixTools - Windows GUI应用程序
 用于远程部署和配置AISBench测试环境
 
 功能流程:
@@ -130,7 +130,7 @@ class WizardApp:
 
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("AISBench Deployer")
+        self.root.title("AISBenchPrefixTools")
         self.root.geometry("1100x720")
         self.root.minsize(900, 600)
         self.root.configure(bg=COLOR_BG)
@@ -210,7 +210,7 @@ class WizardApp:
         sidebar.pack_propagate(False)
 
         # 标题
-        title_lbl = tk.Label(sidebar, text="AISBench\nDeployer", bg=COLOR_CARD,
+        title_lbl = tk.Label(sidebar, text="AISBench\nPrefixTools", bg=COLOR_CARD,
                             fg=COLOR_PRIMARY, font=("Segoe UI", 14, "bold"),
                             justify=tk.LEFT)
         title_lbl.pack(padx=16, pady=(20, 16), anchor=tk.W)
