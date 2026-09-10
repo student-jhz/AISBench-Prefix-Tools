@@ -1499,8 +1499,10 @@ class WizardApp:
             rec_req = min_req * 2
             kv_usage = case.concurrency_recommended * total / kv * 100
             lines.append(f"用例{i}  input={case.input_len:,}  output={case.output_len:,}  dp={dp}  repeat_rate={rate*100:.0f}%")
-            lines.append(f"  并发数 = floor({kv:,} / ({case.input_len:,}+{case.output_len:,}) × 0.9)")
-            lines.append(f"        = floor({max_cc_raw:.2f}) = {case.concurrency_max}")
+            lines.append(f"  并发数(公式) = floor({kv:,} / ({case.input_len:,}+{case.output_len:,}) × 0.9)")
+            lines.append(f"              = floor({max_cc_raw:.2f}) = {case.concurrency_max}")
+            if case.concurrency_recommended != case.concurrency_max:
+                lines.append(f"  并发数(实际) = {case.concurrency_recommended:,}  (用户手动调整)")
             lines.append(f"  最小请求数 = max( floor(2×{kv:,} / {case.input_len:,} / {rate}) + 1 , {case.concurrency_max}×2)")
             lines.append(f"            = max({min_req_raw:.2f}, {case.concurrency_max*2}) = {min_req}")
             lines.append(f"  推荐请求数 = {min_req} × 2 = {rec_req}  (实际: {case.data_num_recommended:,})")
@@ -1633,7 +1635,7 @@ class WizardApp:
             elif field == 'data_num_recommended':
                 case.data_num_recommended = max(num_val, case.data_num_min)
             elif field == 'concurrency_recommended':
-                case.concurrency_recommended = min(num_val, case.concurrency_max)
+                case.concurrency_recommended = num_val
 
             entry.destroy()
             self._refresh_test_tree()

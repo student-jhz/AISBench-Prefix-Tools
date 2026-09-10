@@ -123,10 +123,6 @@ class TestDesigner:
                 1,
                 int(case.concurrency_recommended * factor)
             )
-            case.concurrency_recommended = min(
-                case.concurrency_recommended,
-                case.concurrency_max
-            )
 
     def adjust_single_case(self, idx: int, data_num: int = None, concurrency: int = None):
         """修改单个用例的参数"""
@@ -136,7 +132,7 @@ class TestDesigner:
         if data_num is not None and data_num > 0:
             case.data_num_recommended = max(data_num, case.data_num_min)
         if concurrency is not None and concurrency > 0:
-            case.concurrency_recommended = min(concurrency, case.concurrency_max)
+            case.concurrency_recommended = max(1, concurrency)
 
     def delete_case(self, idx: int) -> bool:
         """删除用例"""
@@ -165,7 +161,7 @@ class TestDesigner:
         if concurrency is None:
             concurrency = max_concurrency
         else:
-            concurrency = min(concurrency, max_concurrency)
+            concurrency = max(1, concurrency)
 
         self.test_cases.append(TestCase(
             input_len=input_len,
