@@ -1906,6 +1906,14 @@ class WizardApp:
             callback=lambda t: self._log_exec(t)  # 直接写缓冲区
         )
 
+        # 下载 aisbench 在容器工作目录生成的附加文件到统一目录
+        extra_files = self.docker.download_extra_files(
+            ["aisbench_all.log", "aisbench_result.csv"], local_log_dir,
+            callback=lambda t: self._log_exec(t)
+        )
+        if extra_files:
+            self._log_exec(f"  ✓ 已下载附加文件: {', '.join(os.path.basename(p) for p in extra_files)}\n")
+
         if not local_log_files:
             self._log_exec("  ✗ 未下载到任何日志文件\n")
             return
@@ -1915,7 +1923,7 @@ class WizardApp:
         # ===== 阶段4: 解析日志生成CSV =====
         self._log_exec("\n[4/4] 解析日志生成CSV结果...\n")
 
-        csv_path = os.path.join(local_dir, f"results_{log_dir_name}.csv")
+        csv_path = os.path.join(local_log_dir, f"results_{log_dir_name}.csv")
 
         results = parse_log_directory(
             local_log_dir, csv_path,

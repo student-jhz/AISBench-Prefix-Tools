@@ -378,6 +378,38 @@ class DockerManager:
 
         return local_paths
 
+    def download_extra_files(self, filenames: List[str], local_dir: str,
+                             callback: Callable[[str], None] = None) -> List[str]:
+        """
+        从代码目录(容器工作目录)下载指定附加文件
+        如 aisbench_all.log / aisbench_result.csv
+        返回本地文件路径列表
+        """
+        if not self.ssh.connected or not self.ssh.sftp:
+            if callback:
+                callback("错误: SSH未连接\n")
+            return []
+
+        os.makedirs(local_dir, exist_ok=True)
+
+        local_paths = []
+        for fname in filenames:
+            remote_path = f"{self.code_host_path}/{fname}"
+            if not self.ssh.file_exists(remote_path):
+                if callback:
+                    callback(f"跳过(不存在): {fname}\n")
+                continue
+            local_path = os.path.join(local_dir, fname)
+            if callback:
+                callback(f"下载: {fname}\n")
+            if self._sftp_download(remote_path, local_path):
+                local_paths.append(local_path)
+            else:
+                if callback:
+                    callback(f"  ✗ 下载失败: {fname}\n")
+
+        return local_paths
+
     def _sftp_download(self, remote_path: str, local_path: str) -> bool:
         """SFTP下载单个文件"""
         try:
