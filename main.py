@@ -17,6 +17,7 @@ import re
 import sys
 import threading
 import tkinter as tk
+import webbrowser
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 from datetime import datetime
 from typing import Optional, Callable, Tuple
@@ -44,32 +45,50 @@ COLOR_WARNING = "#d97706"
 
 class LiveLogHandler:
     """
-    实时日志处理器: 按终端语义处理 \r (进度条单行刷新) 并清理 ANSI 转义码。
-    - 完整行 (\n 结尾) 直接追加到文本组件
-    - 未完成的当前行 (进度条) 通过 mark 定位, 每次刷新覆盖显示, 不产生多行
+    实时日志处理器:
+    - 按终端语义处理 \\r (进度条单行覆盖刷新), 清理 ANSI 转义码
+    - 折叠 \\n 结尾的重复状态行 (ais-bench POST=... / tqdm 进度条),
+      请求发送阶段的周期性状态行只保留最新一行, 不刷屏
+    - 完整行直接落地; 未完成行(pending)实时覆盖显示, finalize 时落地
     """
     ANSI_RE = re.compile(r'\x1b\[[0-9;?]*[A-Za-z]')
+    STATUS_RE = re.compile(
+        r'^\s*(?:'
+        r'POST=\d+'
+        r'|Progress:.*\d+%'
+        r'|Calculating performance details:.*\d+%'
+        r'|\d{1,3}%\s*\|'
+        r')'
+    )
 
     def __init__(self, widget):
         self.widget = widget
         self.raw = ""
         self.has_pending = False
+        self._pending_held = False
+        self._lock = threading.Lock()
 
     def append(self, text: str):
-        self.raw += text
+        with self._lock:
+            self.raw += text
 
     def reset(self):
-        self.raw = ""
-        self.has_pending = False
+        with self._lock:
+            self.raw = ""
+            self.has_pending = False
+            self._pending_held = False
 
     def _clean(self, s: str) -> str:
-        """去除ANSI转义码; 行内 \r 取最后一段 (终端覆盖效果)"""
         s = self.ANSI_RE.sub('', s)
-        if s.endswith('\r'):  # CRLF 行尾的 \r 或等待覆盖的 \r
+        if s.endswith('\r'):
             s = s[:-1]
         if '\r' in s:
             s = s.rsplit('\r', 1)[-1]
         return s
+
+    @classmethod
+    def _is_status(cls, s: str) -> bool:
+        return bool(s) and bool(cls.STATUS_RE.match(s))
 
     def _delete_pending(self):
         if self.has_pending:
@@ -78,8 +97,15 @@ class LiveLogHandler:
             except Exception:
                 pass
             self.has_pending = False
+            self._pending_held = False
 
-    def _show_pending(self, s: str):
+    def _commit_pending(self):
+        if self.has_pending:
+            self.widget.insert('end-1c', '\n')
+            self.has_pending = False
+            self._pending_held = False
+
+    def _show_pending(self, s: str, held: bool = False):
         if self.has_pending:
             try:
                 self.widget.delete('pend_mark', 'end-1c')
@@ -91,28 +117,53 @@ class LiveLogHandler:
         if s:
             self.widget.insert('end-1c', s)
             self.has_pending = True
+            self._pending_held = held
 
     def flush(self):
-        if not self.raw:
-            return
-        segments = self.raw.split('\n')
-        complete, pending = segments[:-1], segments[-1]
-        self.raw = pending
+        with self._lock:
+            if not self.raw:
+                return
+            segments = self.raw.split('\n')
+            complete, tail = segments[:-1], segments[-1]
+            self.raw = tail
 
-        if complete:
-            self._delete_pending()
+            if complete and self.has_pending and not self._pending_held:
+                self._delete_pending()
+
             for line in complete:
-                self.widget.insert('end-1c', self._clean(line) + '\n')
-        self._show_pending(self._clean(pending))
-        self.widget.see('end')
+                cleaned = self._clean(line)
+                if self._is_status(cleaned):
+                    if self._pending_held:
+                        self._show_pending(cleaned, held=True)
+                    else:
+                        self._commit_pending()
+                        self._show_pending(cleaned, held=True)
+                else:
+                    self._commit_pending()
+                    self.widget.insert('end-1c', cleaned + '\n')
+
+            tail_cleaned = self._clean(tail)
+            if tail:
+                if self.has_pending and self._pending_held:
+                    if self._is_status(tail_cleaned):
+                        self._show_pending(tail_cleaned, held=False)
+                    else:
+                        self._commit_pending()
+                        self._show_pending(tail_cleaned, held=False)
+                else:
+                    self._show_pending(tail_cleaned, held=False)
+            self.widget.see('end')
 
     def finalize(self):
-        """命令结束时把未完成的行落地为完整行"""
-        if self.raw:
-            self._delete_pending()
-            line = self._clean(self.raw)
-            self.widget.insert('end-1c', line + '\n')
-            self.raw = ""
+        with self._lock:
+            if self.raw:
+                line = self._clean(self.raw)
+                if line:
+                    self._delete_pending()
+                    self.widget.insert('end-1c', line + '\n')
+                self.raw = ""
+            if self.has_pending:
+                self._commit_pending()
             self.widget.see('end')
 
 
@@ -669,6 +720,34 @@ class WizardApp:
 
         info_frame.columnconfigure(1, weight=1)
 
+        # 下载链接
+        link_frame = tk.Frame(frame, bg=COLOR_CARD, relief=tk.SOLID, bd=1)
+        link_frame.pack(fill=tk.X, pady=4)
+
+        tk.Label(link_frame, text="下载链接:", bg=COLOR_CARD, fg=COLOR_TEXT_MUTED,
+               font=("Segoe UI", 9)).grid(row=0, column=0, sticky=tk.NW, padx=16, pady=8)
+
+        link_inner = tk.Frame(link_frame, bg=COLOR_CARD)
+        link_inner.grid(row=0, column=1, sticky=tk.W, padx=8, pady=8)
+
+        link_items = [
+            ("代码zip包", "https://github.com/rayn-zzz/aisbench_auto_tools_prefix"),
+            ("aisbench镜像", "https://github.com/AISBench/benchmark/releases/tag/v3.1-20260630-master"),
+        ]
+        self.link_urls = {}
+        for i, (label, url) in enumerate(link_items):
+            row = tk.Frame(link_inner, bg=COLOR_CARD)
+            row.pack(fill=tk.X, pady=2)
+            tk.Label(row, text=f"{label}:", bg=COLOR_CARD, fg=COLOR_TEXT,
+                   font=("Segoe UI", 9), width=10, anchor=tk.W).pack(side=tk.LEFT)
+            tk.Label(row, text=url, bg=COLOR_CARD, fg=COLOR_PRIMARY,
+                   font=("Consolas", 8), cursor="hand2").pack(side=tk.LEFT)
+            tk.Button(row, text="打开", font=("Segoe UI", 8),
+                    command=lambda u=url: self._open_link(u)).pack(side=tk.LEFT, padx=(8, 0))
+            self.link_urls[label] = url
+
+        link_frame.columnconfigure(1, weight=1)
+
         # 部署按钮
         btn_frame = tk.Frame(frame, bg=COLOR_BG)
         btn_frame.pack(fill=tk.X, pady=8)
@@ -699,6 +778,13 @@ class WizardApp:
     def _log_docker(self, text):
         """向日志缓冲区写入（线程安全，由主线程定时刷新到UI）"""
         self._docker_log_handler.append(text)
+
+    def _open_link(self, url: str):
+        """在浏览器中打开下载链接"""
+        try:
+            webbrowser.open(url)
+        except Exception as e:
+            messagebox.showerror("打开失败", f"无法打开链接: {url}\n{e}")
 
     def _check_work_dir(self):
         """检查远程工作目录是否存在"""
