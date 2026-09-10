@@ -209,7 +209,9 @@ class TestDesigner:
                 self.total_kv_cache * 100)
 
     def generate_commands(self) -> List[str]:
-        """生成测试命令"""
+        """生成测试命令 (每次执行生成新的随机种子, 保证数据集可复现且不同轮次不同)"""
+        import random
+        seed = random.randint(1, 999999)
         commands = []
         for case in self.test_cases:
             cmd = (
@@ -222,7 +224,8 @@ class TestDesigner:
                 f"--concurrency {case.concurrency_recommended} "
                 f"--dataset_type prefix_cache "
                 f"--repeat_rate {int(self.repeat_rate * 100)}% "
-                f"--dp {self.dp}"
+                f"--dp {self.dp} "
+                f"--seed {seed}"
             )
             if self.request_rate > 0:
                 cmd += f" --request_rate {self.request_rate}"
