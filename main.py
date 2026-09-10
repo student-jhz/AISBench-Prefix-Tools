@@ -338,10 +338,8 @@ class WizardApp:
         self.content_container.bind('<Configure>', _sync_scroll_region)
         self._content_canvas.bind('<Configure>', _sync_width)
 
-        def _on_mousewheel(_event):
-            self._content_canvas.yview_scroll(-1 * (_event.delta // 120), 'units')
-
-        self._content_canvas.bind_all('<MouseWheel>', _on_mousewheel, add='+')
+        # 注: 不绑定全局滚轮, 界面整体不随滚轮滚动; 日志栏等Text组件
+        # 在Windows下自带滚轮滚动。窗口过小时可通过右侧滚动条拖动。
 
         # 为每个步骤创建Frame
         self.step_frames = []
@@ -2059,6 +2057,10 @@ class WizardApp:
                 frame.pack_forget()
 
         self.current_step = step
+
+        # 切换步骤时内容区回到顶部
+        if hasattr(self, '_content_canvas'):
+            self._content_canvas.yview_moveto(0)
 
         # 更新侧边栏
         for i, (indicator, label) in enumerate(self.step_buttons):
