@@ -302,10 +302,46 @@ class WizardApp:
         return self.current_step
 
     def _build_content_area(self, parent):
-        """构建右侧内容区"""
-        # 内容容器
-        self.content_container = tk.Frame(parent, bg=COLOR_BG)
-        self.content_container.pack(fill=tk.BOTH, expand=True)
+        """构建右侧内容区 (可滚动 + 导航栏固定底部)"""
+        # 导航栏 (固定在底部)
+        nav_frame = tk.Frame(parent, bg=COLOR_BG)
+        nav_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(8, 0))
+
+        self.prev_btn = ttk.Button(nav_frame, text="< 上一步", command=self._prev_step)
+        self.prev_btn.pack(side=tk.LEFT)
+
+        self.next_btn = ttk.Button(nav_frame, text="下一步 >", command=self._next_step,
+                                   style="Accent.TButton")
+        self.next_btn.pack(side=tk.RIGHT)
+
+        # 可滚动内容容器
+        scrollbar = tk.Scrollbar(parent, orient=tk.VERTICAL)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self._content_canvas = tk.Canvas(parent, bg=COLOR_BG, highlightthickness=0,
+                                         yscrollcommand=scrollbar.set)
+        self._content_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=self._content_canvas.yview)
+
+        self.content_container = tk.Frame(self._content_canvas, bg=COLOR_BG)
+        self._content_canvas.create_window((0, 0), window=self.content_container,
+                                           anchor='nw', tags='inner')
+
+        def _sync_scroll_region(_event=None):
+            self._content_canvas.configure(
+                scrollregion=self._content_canvas.bbox('all'))
+
+        def _sync_width(_event):
+            w = _event.width
+            self._content_canvas.itemconfig('inner', width=w)
+
+        self.content_container.bind('<Configure>', _sync_scroll_region)
+        self._content_canvas.bind('<Configure>', _sync_width)
+
+        def _on_mousewheel(_event):
+            self._content_canvas.yview_scroll(-1 * (_event.delta // 120), 'units')
+
+        self._content_canvas.bind_all('<MouseWheel>', _on_mousewheel, add='+')
 
         # 为每个步骤创建Frame
         self.step_frames = []
@@ -320,17 +356,6 @@ class WizardApp:
         self._build_step3_config()
         self._build_step4_testcases()
         self._build_step5_execute()
-
-        # 导航栏
-        nav_frame = tk.Frame(parent, bg=COLOR_BG)
-        nav_frame.pack(fill=tk.X, pady=(8, 0))
-
-        self.prev_btn = ttk.Button(nav_frame, text="< 上一步", command=self._prev_step)
-        self.prev_btn.pack(side=tk.LEFT)
-
-        self.next_btn = ttk.Button(nav_frame, text="下一步 >", command=self._next_step,
-                                   style="Accent.TButton")
-        self.next_btn.pack(side=tk.RIGHT)
 
         self._show_step(0)
 
@@ -1442,6 +1467,47 @@ class WizardApp:
 
         self.test_tree.bind("<Double-1>", self._on_tree_edit)
 
+        # 计算明细 (代入值展示)
+        calc_frame = tk.Frame(frame, bg=COLOR_CARD, relief=tk.SOLID, bd=1)
+        calc_frame.pack(fill=tk.X, pady=(4, 8))
+
+        tk.Label(calc_frame, text="计算明细 (代入当前KV参数):",
+               bg=COLOR_CARD, fg=COLOR_TEXT_MUTED,
+               font=("Segoe UI", 7, "bold"), anchor=tk.W).pack(fill=tk.X, padx=12, pady=(6, 0))
+
+        self.calc_detail_text = scrolledtext.ScrolledText(calc_frame, height=6,
+                                                           font=("Consolas", 8),
+                                                           bg="#f0f5ff", fg="#1e293b",
+                                                           wrap=tk.WORD)
+        self.calc_detail_text.pack(fill=tk.X, padx=12, pady=(4, 8))
+        self.calc_detail_text.insert("1.0", "(点击\"生成测试用例\"后显示详细计算过程)")
+
+    def _show_calc_details(self):
+        """显示代入值计算公式"""
+        if not hasattr(self, 'calc_detail_text') or not self.designer.test_cases:
+            return
+        self.calc_detail_text.delete("1.0", tk.END)
+        kv = self.designer.total_kv_cache
+        rate = self.designer.repeat_rate
+        dp = self.designer.dp
+        lines = []
+        for i, case in enumerate(self.designer.test_cases, 1):
+            total = case.input_len + case.output_len
+            max_cc_raw = kv / total * 0.9
+            min_req_raw = 2 * kv / case.input_len / rate + 1
+            min_req = max(int(min_req_raw), case.concurrency_max * 2)
+            rec_req = min_req * 2
+            kv_usage = case.concurrency_recommended * total / kv * 100
+            lines.append(f"用例{i}  input={case.input_len:,}  output={case.output_len:,}  dp={dp}  repeat_rate={rate*100:.0f}%")
+            lines.append(f"  并发数 = floor({kv:,} / ({case.input_len:,}+{case.output_len:,}) × 0.9)")
+            lines.append(f"        = floor({max_cc_raw:.2f}) = {case.concurrency_max}")
+            lines.append(f"  最小请求数 = max( floor(2×{kv:,} / {case.input_len:,} / {rate}) + 1 , {case.concurrency_max}×2)")
+            lines.append(f"            = max({min_req_raw:.2f}, {case.concurrency_max*2}) = {min_req}")
+            lines.append(f"  推荐请求数 = {min_req} × 2 = {rec_req}  (实际: {case.data_num_recommended:,})")
+            lines.append(f"  KV使用率  = {case.concurrency_recommended} × {total:,} / {kv:,} × 100% = {kv_usage:.2f}%")
+            lines.append("")
+        self.calc_detail_text.insert("1.0", "\n".join(lines).rstrip())
+
     def _generate_test_cases(self):
         """生成测试用例"""
         try:
@@ -1498,6 +1564,7 @@ class WizardApp:
                 f"{case.data_num_recommended:,}", f"{case.data_num_min:,}",
                 f"{case.concurrency_recommended:,}", f"{kv_usage:.1f}%"
             ))
+        self._show_calc_details()
 
     def _adjust_cases(self, factor, adjust_type):
         """调整测试用例参数"""
