@@ -62,12 +62,14 @@ class TestDesigner:
         """获取小于最大请求长度的预设输入长度"""
         return [l for l in self.PRESET_INPUT_LENGTHS if l < self.max_request_length]
 
-    def set_input_lengths(self, lengths: List[int]):
-        """设置输入长度"""
+    def set_input_lengths(self, lengths: List[int]) -> List[int]:
+        """设置输入长度; 返回因超出模型最大上下文被过滤的长度列表"""
         valid = [l for l in lengths if l < self.max_request_length]
+        skipped = [l for l in lengths if l >= self.max_request_length]
         if not valid:
-            valid = [16384, 32768]
+            valid = self.get_valid_preset_inputs()[:2] or [16384, 32768]
         self.input_lengths = sorted(set(valid))
+        return skipped
 
     def set_output_lengths(self, lengths: List[int]):
         """设置输出长度"""

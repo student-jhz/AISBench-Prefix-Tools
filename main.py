@@ -1623,9 +1623,35 @@ class WizardApp:
         if not out_lengths:
             out_lengths = [512, 1024]
 
-        self.designer.set_input_lengths(in_lengths)
+        max_len = self.designer.max_request_length
+        valid_selected = [l for l in in_lengths if l < max_len]
+        skipped_inputs = self.designer.set_input_lengths(in_lengths)
         self.designer.set_output_lengths(out_lengths)
         self.designer.generate_test_cases()
+
+        # 超长输入不再静默替换, 明确提示用户
+        if skipped_inputs:
+            def _fmt_len(n):
+                if n >= 1048576:
+                    return f"{n//1048576}M"
+                elif n >= 1024:
+                    return f"{n//1024}K"
+                return str(n)
+            skipped_str = ", ".join(_fmt_len(l) for l in skipped_inputs)
+            if valid_selected:
+                kept_str = ", ".join(_fmt_len(l) for l in sorted(valid_selected))
+                messagebox.showwarning(
+                    "输入长度超出限制",
+                    f"以下选中的输入长度超过模型最大上下文 ({max_len:,})，已跳过:\n"
+                    f"  {skipped_str}\n\n"
+                    f"实际生成用例使用的输入长度: {kept_str}")
+            else:
+                fallback_str = ", ".join(_fmt_len(l) for l in self.designer.input_lengths)
+                messagebox.showwarning(
+                    "输入长度超出限制",
+                    f"所选输入长度全部超过模型最大上下文 ({max_len:,}):\n"
+                    f"  {skipped_str}\n\n"
+                    f"已自动改用有效长度: {fallback_str}")
 
         self._refresh_test_tree()
 
