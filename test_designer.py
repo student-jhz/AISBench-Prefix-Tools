@@ -163,7 +163,12 @@ class TestDesigner:
 
     def add_custom_case(self, input_len: int, output_len: int,
                         data_num: int = None, concurrency: int = None):
-        """添加自定义用例"""
+        """添加自定义用例 (校验长度不超模型最大上下文)"""
+        if self.max_request_length > 0 and input_len + output_len > self.max_request_length:
+            raise ValueError(
+                f"输入+输出长度 ({input_len:,}+{output_len:,}={input_len + output_len:,}) "
+                f"超过模型最大上下文 ({self.max_request_length:,}), "
+                f"vLLM将返回Bad Request拒绝该请求")
         max_concurrency = max(1, int(self.total_kv_cache / (input_len + output_len)))
         min_data_num = max(
             int(2 * self.total_kv_cache / input_len / self.repeat_rate) + 1,

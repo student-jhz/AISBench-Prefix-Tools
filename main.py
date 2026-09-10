@@ -1711,8 +1711,24 @@ class WizardApp:
                 return
 
             if field == 'input_len':
+                new_total = num_val + case.output_len
+                if (self.designer.max_request_length > 0
+                        and new_total > self.designer.max_request_length):
+                    messagebox.showwarning("参数超出限制",
+                        f"输入+输出长度 ({num_val:,}+{case.output_len:,}={new_total:,}) "
+                        f"超过模型最大上下文 ({self.designer.max_request_length:,})")
+                    entry.destroy()
+                    return
                 case.input_len = num_val
             elif field == 'output_len':
+                new_total = case.input_len + num_val
+                if (self.designer.max_request_length > 0
+                        and new_total > self.designer.max_request_length):
+                    messagebox.showwarning("参数超出限制",
+                        f"输入+输出长度 ({case.input_len:,}+{num_val:,}={new_total:,}) "
+                        f"超过模型最大上下文 ({self.designer.max_request_length:,})")
+                    entry.destroy()
+                    return
                 case.output_len = num_val
             elif field == 'data_num_recommended':
                 case.data_num_recommended = max(num_val, case.data_num_min)
@@ -1774,7 +1790,11 @@ class WizardApp:
                 messagebox.showwarning("提示", "请求数和并发数必须为数字", parent=dialog)
                 return
 
-            self.designer.add_custom_case(il, ol, data_num, concurrency)
+            try:
+                self.designer.add_custom_case(il, ol, data_num, concurrency)
+            except ValueError as e:
+                messagebox.showwarning("参数超出限制", str(e), parent=dialog)
+                return
             self._refresh_test_tree()
             dialog.destroy()
 
