@@ -551,6 +551,9 @@ class WizardApp:
                font=("Segoe UI", 9)).pack(side=tk.LEFT, fill=tk.X, expand=True)
         tk.Button(self.code_zip_frame, text="浏览...", command=self._browse_zip,
                 font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(4, 0))
+        tk.Button(self.code_zip_frame, text="代码下载链接", command=lambda: self._open_link(
+                "https://github.com/rayn-zzz/aisbench_auto_tools_prefix"),
+                font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(4, 0))
 
         row += 1
 
