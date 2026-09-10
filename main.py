@@ -1440,6 +1440,22 @@ class WizardApp:
                            font=("Segoe UI", 9))
             entry.grid(row=i, column=1, padx=16, pady=6, sticky=tk.W)
 
+        # KV cache 查询方式提示
+        hint_row = len(kv_fields)
+        tk.Label(kv_frame, text="查询方式:", bg=COLOR_CARD, fg=COLOR_TEXT_MUTED,
+               font=("Segoe UI", 8)).grid(row=hint_row, column=0, sticky=tk.NW,
+                                          padx=16, pady=(6, 0))
+        hint_frame = tk.Frame(kv_frame, bg="#f0f5ff")
+        hint_frame.grid(row=hint_row, column=1, padx=16, pady=(6, 8), sticky=tk.W)
+        tk.Label(hint_frame,
+                 text="cat vllm_serve.log | grep -e 'GPU KV cache size' -e 'Maximum concurrency'",
+                 bg="#f0f5ff", fg=COLOR_PRIMARY, font=("Consolas", 8),
+                 anchor=tk.W).pack(fill=tk.X)
+        tk.Label(hint_frame,
+                 text="GPU KV cache size → 单个DP组KV cache (tokens);   Maximum concurrency → 模型最大上下文 (tokens)",
+                 bg="#f0f5ff", fg=COLOR_TEXT_MUTED, font=("Segoe UI", 7),
+                 anchor=tk.W).pack(fill=tk.X)
+
         # 输入长度选择
         in_frame = tk.Frame(frame, bg=COLOR_CARD, relief=tk.SOLID, bd=1)
         in_frame.pack(fill=tk.X, pady=4)
@@ -1492,16 +1508,24 @@ class WizardApp:
         tk.Button(gen_frame, text="删除用例", font=("Segoe UI", 8),
                 command=self._delete_test_case).pack(side=tk.LEFT, padx=4)
 
-        # 测试用例表格
-        tk.Label(frame, text="测试用例 (双击单元格可编辑 Input/Output/请求数/并发数):",
-               bg=COLOR_BG, fg=COLOR_TEXT,
-               font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(8, 4))
+        # 测试用例 + 计算明细 (拖拽分隔条调整两者占比, 各保留最小高度)
+        self.cases_paned = tk.PanedWindow(frame, orient=tk.VERTICAL,
+                                          sashrelief=tk.RAISED, sashwidth=6,
+                                          bg=COLOR_BORDER)
+        self.cases_paned.pack(fill=tk.BOTH, expand=True, pady=(8, 4))
 
-        tree_frame = tk.Frame(frame)
+        # Pane 1: 测试用例表格
+        tree_pane = tk.Frame(self.cases_paned, bg=COLOR_BG)
+        self.cases_paned.add(tree_pane, minsize=160, stretch="always")
+        tk.Label(tree_pane, text="测试用例 (双击单元格可编辑 Input/Output/请求数/并发数):",
+               bg=COLOR_BG, fg=COLOR_TEXT,
+               font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(0, 4))
+
+        tree_frame = tk.Frame(tree_pane)
         tree_frame.pack(fill=tk.BOTH, expand=True)
 
         columns = ("num", "input", "output", "data_rec", "data_min", "concurrency", "kv_usage")
-        self.test_tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=8,
+        self.test_tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=4,
                                       selectmode="browse")
 
         headings = [("#", 40), ("Input", 80), ("Output", 80),
@@ -1517,19 +1541,18 @@ class WizardApp:
 
         self.test_tree.bind("<Double-1>", self._on_tree_edit)
 
-        # 计算明细 (代入值展示)
-        calc_frame = tk.Frame(frame, bg=COLOR_CARD, relief=tk.SOLID, bd=1)
-        calc_frame.pack(fill=tk.X, pady=(4, 8))
+        # Pane 2: 计算明细 (代入值展示)
+        calc_pane = tk.Frame(self.cases_paned, bg=COLOR_BG)
+        self.cases_paned.add(calc_pane, minsize=120, stretch="always")
+        tk.Label(calc_pane, text="计算明细 (代入当前KV参数):",
+               bg=COLOR_BG, fg=COLOR_TEXT,
+               font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(4, 0))
 
-        tk.Label(calc_frame, text="计算明细 (代入当前KV参数):",
-               bg=COLOR_CARD, fg=COLOR_TEXT_MUTED,
-               font=("Segoe UI", 7, "bold"), anchor=tk.W).pack(fill=tk.X, padx=12, pady=(6, 0))
-
-        self.calc_detail_text = scrolledtext.ScrolledText(calc_frame, height=6,
+        self.calc_detail_text = scrolledtext.ScrolledText(calc_pane, height=4,
                                                            font=("Consolas", 8),
                                                            bg="#f0f5ff", fg="#1e293b",
                                                            wrap=tk.WORD)
-        self.calc_detail_text.pack(fill=tk.BOTH, expand=True, padx=12, pady=(4, 8))
+        self.calc_detail_text.pack(fill=tk.BOTH, expand=True, pady=(4, 8))
         self.calc_detail_text.insert("1.0", "(点击\"生成测试用例\"后显示详细计算过程)")
 
     def _show_calc_details(self):
