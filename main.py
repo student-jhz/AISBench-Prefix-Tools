@@ -1258,23 +1258,22 @@ class WizardApp:
                 font=("Segoe UI", 9, "bold"), relief=tk.FLAT, padx=16, pady=4,
                 command=self._generate_test_cases).pack(side=tk.LEFT)
 
-        # 调整按钮
-        tk.Button(gen_frame, text="请求数 ×0.5", font=("Segoe UI", 8),
-                command=lambda: self._adjust_cases(0.5, 'data')).pack(side=tk.LEFT, padx=4)
-        tk.Button(gen_frame, text="请求数 ×2", font=("Segoe UI", 8),
-                command=lambda: self._adjust_cases(2, 'data')).pack(side=tk.LEFT, padx=4)
-        tk.Button(gen_frame, text="并发数 ×0.5", font=("Segoe UI", 8),
-                command=lambda: self._adjust_cases(0.5, 'concurrency')).pack(side=tk.LEFT, padx=4)
+        tk.Button(gen_frame, text="添加用例", font=("Segoe UI", 8),
+                command=self._add_test_case).pack(side=tk.LEFT, padx=4)
+        tk.Button(gen_frame, text="删除用例", font=("Segoe UI", 8),
+                command=self._delete_test_case).pack(side=tk.LEFT, padx=4)
 
         # 测试用例表格
-        tk.Label(frame, text="测试用例:", bg=COLOR_BG, fg=COLOR_TEXT,
+        tk.Label(frame, text="测试用例 (双击单元格可编辑 Input/Output/请求数/并发数):",
+               bg=COLOR_BG, fg=COLOR_TEXT,
                font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(8, 4))
 
         tree_frame = tk.Frame(frame)
         tree_frame.pack(fill=tk.BOTH, expand=True)
 
         columns = ("num", "input", "output", "data_rec", "data_min", "concurrency", "kv_usage")
-        self.test_tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=8)
+        self.test_tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=8,
+                                      selectmode="browse")
 
         headings = [("#", 40), ("Input", 80), ("Output", 80),
                     ("请求数(推荐)", 120), ("请求数(最小)", 120),
@@ -1286,6 +1285,8 @@ class WizardApp:
         self.test_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         tk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.test_tree.yview).pack(
             side=tk.RIGHT, fill=tk.Y)
+
+        self.test_tree.bind("<Double-1>", self._on_tree_edit)
 
     def _generate_test_cases(self):
         """生成测试用例"""
@@ -1353,6 +1354,147 @@ class WizardApp:
         else:
             self.designer.adjust_concurrency(factor)
         self._refresh_test_tree()
+
+    def _on_tree_edit(self, event):
+        """双击Treeview单元格进行行内编辑"""
+        row_id = self.test_tree.identify_row(event.y)
+        col_id = self.test_tree.identify_column(event.x)
+        if not row_id:
+            return
+
+        EDITABLE = {
+            '#2': 'input_len',
+            '#3': 'output_len',
+            '#4': 'data_num_recommended',
+            '#6': 'concurrency_recommended',
+        }
+        if col_id not in EDITABLE:
+            return
+        field = EDITABLE[col_id]
+
+        item_index = self.test_tree.index(row_id)
+        if item_index >= len(self.designer.test_cases):
+            return
+        case = self.designer.test_cases[item_index]
+        current_val = getattr(case, field)
+
+        bbox = self.test_tree.bbox(row_id, col_id)
+        if not bbox:
+            return
+        x, y, w, h = bbox
+
+        entry = tk.Entry(self.test_tree, font=("Segoe UI", 9), justify=tk.CENTER)
+        entry.place(x=x, y=y, width=w, height=h)
+        entry.insert(0, str(current_val))
+        entry.select_range(0, tk.END)
+        entry.focus_set()
+
+        done = [False]
+
+        def _confirm(event=None):
+            if done[0]:
+                return
+            done[0] = True
+            val = entry.get().strip()
+            try:
+                num_val = int(val)
+                if num_val <= 0:
+                    entry.destroy()
+                    return
+            except ValueError:
+                entry.destroy()
+                return
+
+            if field == 'input_len':
+                case.input_len = num_val
+            elif field == 'output_len':
+                case.output_len = num_val
+            elif field == 'data_num_recommended':
+                case.data_num_recommended = max(num_val, case.data_num_min)
+            elif field == 'concurrency_recommended':
+                case.concurrency_recommended = min(num_val, case.concurrency_max)
+
+            entry.destroy()
+            self._refresh_test_tree()
+
+        def _cancel(event=None):
+            if done[0]:
+                return
+            done[0] = True
+            entry.destroy()
+
+        entry.bind('<Return>', _confirm)
+        entry.bind('<Escape>', _cancel)
+        entry.bind('<FocusOut>', _confirm)
+
+    def _add_test_case(self):
+        """添加自定义测试用例"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("添加测试用例")
+        dialog.geometry("360x210")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        field_defs = [
+            ("输入长度:", "input_len"),
+            ("输出长度:", "output_len"),
+            ("请求数 (留空=推荐):", "data_num"),
+            ("并发数 (留空=推荐):", "concurrency"),
+        ]
+        entry_vars = {}
+        for i, (label, key) in enumerate(field_defs):
+            tk.Label(dialog, text=label, font=("Segoe UI", 9)).grid(
+                row=i, column=0, padx=16, pady=8, sticky=tk.W)
+            var = tk.StringVar()
+            ent = tk.Entry(dialog, textvariable=var, width=15, font=("Segoe UI", 9))
+            ent.grid(row=i, column=1, padx=16, pady=8)
+            entry_vars[key] = var
+
+        def _confirm(event=None):
+            try:
+                il = int(entry_vars['input_len'].get())
+                ol = int(entry_vars['output_len'].get())
+            except ValueError:
+                messagebox.showwarning("提示", "请输入有效的输入/输出长度", parent=dialog)
+                return
+
+            data_num = None
+            concurrency = None
+            try:
+                if entry_vars['data_num'].get().strip():
+                    data_num = int(entry_vars['data_num'].get())
+                if entry_vars['concurrency'].get().strip():
+                    concurrency = int(entry_vars['concurrency'].get())
+            except ValueError:
+                messagebox.showwarning("提示", "请求数和并发数必须为数字", parent=dialog)
+                return
+
+            self.designer.add_custom_case(il, ol, data_num, concurrency)
+            self._refresh_test_tree()
+            dialog.destroy()
+
+        btn_frame = tk.Frame(dialog)
+        btn_frame.grid(row=len(field_defs), column=0, columnspan=2, pady=12)
+        tk.Button(btn_frame, text="确认", bg=COLOR_PRIMARY, fg="white",
+                 font=("Segoe UI", 9, "bold"), relief=tk.FLAT, padx=16, pady=4,
+                 command=_confirm).pack(side=tk.LEFT, padx=8)
+        tk.Button(btn_frame, text="取消", font=("Segoe UI", 9),
+                 command=dialog.destroy).pack(side=tk.LEFT, padx=8)
+
+        dialog.bind('<Return>', lambda e: _confirm())
+
+    def _delete_test_case(self):
+        """删除选中的测试用例"""
+        selection = self.test_tree.selection()
+        if not selection:
+            messagebox.showwarning("提示", "请先选择要删除的用例行")
+            return
+        if len(self.designer.test_cases) <= 1:
+            messagebox.showwarning("提示", "至少保留一个测试用例")
+            return
+        item_index = self.test_tree.index(selection[0])
+        if self.designer.delete_case(item_index):
+            self._refresh_test_tree()
 
     # ============================================================
     #  Step 5: 执行测试
