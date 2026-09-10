@@ -13,6 +13,7 @@ AISBench Deployer - Windows GUI应用程序
 """
 
 import os
+import re
 import sys
 import threading
 import tkinter as tk
@@ -39,6 +40,80 @@ COLOR_TEXT_MUTED = "#64748b"
 COLOR_SUCCESS = "#16a34a"
 COLOR_ERROR = "#dc2626"
 COLOR_WARNING = "#d97706"
+
+
+class LiveLogHandler:
+    """
+    实时日志处理器: 按终端语义处理 \r (进度条单行刷新) 并清理 ANSI 转义码。
+    - 完整行 (\n 结尾) 直接追加到文本组件
+    - 未完成的当前行 (进度条) 通过 mark 定位, 每次刷新覆盖显示, 不产生多行
+    """
+    ANSI_RE = re.compile(r'\x1b\[[0-9;?]*[A-Za-z]')
+
+    def __init__(self, widget):
+        self.widget = widget
+        self.raw = ""
+        self.has_pending = False
+
+    def append(self, text: str):
+        self.raw += text
+
+    def reset(self):
+        self.raw = ""
+        self.has_pending = False
+
+    def _clean(self, s: str) -> str:
+        """去除ANSI转义码; 行内 \r 取最后一段 (终端覆盖效果)"""
+        s = self.ANSI_RE.sub('', s)
+        if s.endswith('\r'):  # CRLF 行尾的 \r 或等待覆盖的 \r
+            s = s[:-1]
+        if '\r' in s:
+            s = s.rsplit('\r', 1)[-1]
+        return s
+
+    def _delete_pending(self):
+        if self.has_pending:
+            try:
+                self.widget.delete('pend_mark', 'end-1c')
+            except Exception:
+                pass
+            self.has_pending = False
+
+    def _show_pending(self, s: str):
+        if self.has_pending:
+            try:
+                self.widget.delete('pend_mark', 'end-1c')
+            except Exception:
+                pass
+        else:
+            self.widget.mark_set('pend_mark', 'end-1c')
+            self.widget.mark_gravity('pend_mark', 'left')
+        if s:
+            self.widget.insert('end-1c', s)
+            self.has_pending = True
+
+    def flush(self):
+        if not self.raw:
+            return
+        segments = self.raw.split('\n')
+        complete, pending = segments[:-1], segments[-1]
+        self.raw = pending
+
+        if complete:
+            self._delete_pending()
+            for line in complete:
+                self.widget.insert('end-1c', self._clean(line) + '\n')
+        self._show_pending(self._clean(pending))
+        self.widget.see('end')
+
+    def finalize(self):
+        """命令结束时把未完成的行落地为完整行"""
+        if self.raw:
+            self._delete_pending()
+            line = self._clean(self.raw)
+            self.widget.insert('end-1c', line + '\n')
+            self.raw = ""
+            self.widget.see('end')
 
 
 class WizardApp:
@@ -83,9 +158,7 @@ class WizardApp:
         self.remote_tar_path = ""
         self.remote_zip_path = ""
 
-        # 日志缓冲 + 取消标志（解决后台线程阻塞UI）
-        self._log_buffer = ""
-        self._exec_log_buffer = ""
+        # 日志处理器 + 取消标志（解决后台线程阻塞UI）
         self._cancel_flag = threading.Event()
         self._flush_timer_id = None
         self._exec_flush_timer_id = None
@@ -107,6 +180,10 @@ class WizardApp:
         self.output_length_vars = {}
 
         self._build_ui()
+
+        # 日志处理器 (部署日志/执行日志, 处理\r进度条单行刷新)
+        self._docker_log_handler = LiveLogHandler(self.docker_log)
+        self._exec_log_handler = LiveLogHandler(self.exec_log)
 
     # ============================================================
     #  UI构建
@@ -621,7 +698,7 @@ class WizardApp:
 
     def _log_docker(self, text):
         """向日志缓冲区写入（线程安全，由主线程定时刷新到UI）"""
-        self._log_buffer += text
+        self._docker_log_handler.append(text)
 
     def _check_work_dir(self):
         """检查远程工作目录是否存在"""
@@ -705,18 +782,12 @@ class WizardApp:
 
     def _flush_log_buffer(self):
         """主线程定时刷新部署日志缓冲区到UI（每200ms）"""
-        if self._log_buffer:
-            self.docker_log.insert(tk.END, self._log_buffer)
-            self._log_buffer = ""
-            self.docker_log.see(tk.END)
+        self._docker_log_handler.flush()
         self._flush_timer_id = self.root.after(200, self._flush_log_buffer)
 
     def _flush_exec_log_buffer(self):
         """主线程定时刷新执行日志缓冲区到UI（每200ms）"""
-        if self._exec_log_buffer:
-            self.exec_log.insert(tk.END, self._exec_log_buffer)
-            self._exec_log_buffer = ""
-            self.exec_log.see(tk.END)
+        self._exec_log_handler.flush()
         self._exec_flush_timer_id = self.root.after(200, self._flush_exec_log_buffer)
 
     def _cancel_deploy(self):
@@ -765,7 +836,7 @@ class WizardApp:
                 # choice is False: 直接部署
 
         self._cancel_flag.clear()
-        self._log_buffer = ""
+        self._docker_log_handler.reset()
         self.docker_log.delete(1.0, tk.END)
         self.deploy_btn.config(state=tk.DISABLED, text="部署中...")
         self.cancel_deploy_btn.config(state=tk.NORMAL)
@@ -784,10 +855,7 @@ class WizardApp:
                 self.cancel_deploy_btn.config(state=tk.DISABLED)
                 self.clean_work_dir_btn.config(state=tk.NORMAL)
                 # 最后刷新一次确保所有日志已输出
-                if self._log_buffer:
-                    self.docker_log.insert(tk.END, self._log_buffer)
-                    self._log_buffer = ""
-                    self.docker_log.see(tk.END)
+                self._docker_log_handler.finalize()
                 # 停止定时刷新
                 if self._flush_timer_id:
                     self.root.after_cancel(self._flush_timer_id)
@@ -1592,7 +1660,7 @@ class WizardApp:
             return
 
         self.exec_log.delete(1.0, tk.END)
-        self._exec_log_buffer = ""
+        self._exec_log_handler.reset()
         self.exec_test_btn.config(state=tk.DISABLED, text="执行中...")
 
         # 启动定时刷新执行日志
@@ -1608,10 +1676,7 @@ class WizardApp:
                 if self.docker and self.docker.container_name:
                     self.cleanup_btn.config(state=tk.NORMAL)
                 # 最后刷新一次
-                if self._exec_log_buffer:
-                    self.exec_log.insert(tk.END, self._exec_log_buffer)
-                    self._exec_log_buffer = ""
-                    self.exec_log.see(tk.END)
+                self._exec_log_handler.finalize()
                 if self._exec_flush_timer_id:
                     self.root.after_cancel(self._exec_flush_timer_id)
                     self._exec_flush_timer_id = None
@@ -1728,20 +1793,21 @@ class WizardApp:
 
             # 输出结果摘要表
             self._log_exec("结果摘要:\n")
-            self._log_exec("-" * 110 + "\n")
+            self._log_exec("-" * 120 + "\n")
             self._log_exec(f"{'Input':>8} {'Output':>8} {'Max_CC':>8} {'CC':>8} "
                           f"{'In_Tput':>10} {'Out_Tput':>10} {'TTFT_avg':>10} {'TPOT_avg':>10} "
-                          f"{'QPS':>8} {'Ext_Hit%':>10}\n")
-            self._log_exec("-" * 110 + "\n")
+                          f"{'QPS':>8} {'HBM_Hit%':>10} {'Ext_Hit%':>10}\n")
+            self._log_exec("-" * 120 + "\n")
             for row in results:
                 self._log_exec(
                     f"{row.get('input_len',''):>8} {row.get('output_len',''):>8} "
                     f"{str(row.get('max_cc','')):>8} {str(row.get('cc','')):>8} "
                     f"{str(row.get('input_token_throughput','')):>10} {str(row.get('output_throughput','')):>10} "
                     f"{str(row.get('TTFT_avg','')):>10} {str(row.get('TPOT_avg','')):>10} "
-                    f"{str(row.get('qps','')):>8} {str(row.get('external_hit_rate','')):>10}\n"
+                    f"{str(row.get('qps','')):>8} {str(row.get('hbm_hit_rate','')):>10} "
+                    f"{str(row.get('external_hit_rate','')):>10}\n"
                 )
-            self._log_exec("-" * 110 + "\n")
+            self._log_exec("-" * 120 + "\n")
 
             self.root.after(0, lambda: messagebox.showinfo(
                 "完成",
@@ -1767,7 +1833,7 @@ class WizardApp:
 
     def _log_exec(self, text):
         """向执行日志缓冲区写入（线程安全，由主线程定时刷新）"""
-        self._exec_log_buffer += text
+        self._exec_log_handler.append(text)
 
     def _show_cleanup_reminder(self):
         """测试完成后提醒清理远程环境"""
