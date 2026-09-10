@@ -492,7 +492,7 @@ class WizardApp:
         frame = self.step_frames[1]
 
         self._build_step_header(frame, "步骤 2: 选择文件与模型",
-                                "选择AISBench镜像tar包和模型路径 (代码已内置)")
+                                "选择AISBench镜像tar包和模型路径, 测试代码可选内置或本地zip")
 
         form = tk.Frame(frame, bg=COLOR_CARD, relief=tk.SOLID, bd=1)
         form.pack(fill=tk.BOTH, expand=True, pady=8)
@@ -515,17 +515,42 @@ class WizardApp:
 
         row += 1
 
-        # 测试代码 (已内置)
-        tk.Label(form, text="测试代码 (已内置):", bg=COLOR_CARD, fg=COLOR_TEXT,
+        # 测试代码来源: 程序内置 / 本地zip包
+        tk.Label(form, text="测试代码来源:", bg=COLOR_CARD, fg=COLOR_TEXT,
                font=("Segoe UI", 9)).grid(row=row, column=0, sticky=tk.W, padx=16, pady=8)
-        code_frame = tk.Frame(form, bg=COLOR_CARD)
-        code_frame.grid(row=row, column=1, columnspan=2, padx=16, pady=8, sticky=tk.EW)
+        source_frame = tk.Frame(form, bg=COLOR_CARD)
+        source_frame.grid(row=row, column=1, columnspan=2, padx=16, pady=(8, 2), sticky=tk.W)
+
+        self.code_source_var = tk.StringVar(value="builtin")
+        tk.Radiobutton(source_frame, text="程序内置", variable=self.code_source_var,
+                       value="builtin", bg=COLOR_CARD, font=("Segoe UI", 9),
+                       command=self._on_code_source_change).pack(side=tk.LEFT)
+        tk.Radiobutton(source_frame, text="本地zip包", variable=self.code_source_var,
+                       value="zip", bg=COLOR_CARD, font=("Segoe UI", 9),
+                       command=self._on_code_source_change).pack(side=tk.LEFT, padx=(12, 0))
+
+        row += 1
+
+        # 内置代码状态 / zip选择 (同格切换显示)
+        self.code_builtin_frame = tk.Frame(form, bg=COLOR_CARD)
+        self.code_builtin_frame.grid(row=row, column=1, columnspan=2,
+                                     padx=16, pady=(0, 8), sticky=tk.EW)
         code_dir = self._get_bundled_code_dir()
         code_desc = "aisbench_auto_tools_prefix (程序内置, 部署时自动上传)" \
-            if os.path.isdir(code_dir) else "未找到内置代码!"
-        tk.Label(code_frame, text=code_desc,
+            if os.path.isdir(code_dir) else "未找到内置代码! 请改用本地zip包"
+        tk.Label(self.code_builtin_frame, text=code_desc,
                  bg=COLOR_CARD, fg=(COLOR_TEXT if os.path.isdir(code_dir) else COLOR_ERROR),
-                 font=("Segoe UI", 9), anchor=tk.W).pack(side=tk.LEFT, fill=tk.X, expand=True)
+                 font=("Segoe UI", 8), anchor=tk.W).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        self.code_zip_frame = tk.Frame(form, bg=COLOR_CARD)
+        self.code_zip_frame.grid(row=row, column=1, columnspan=2,
+                                 padx=16, pady=(0, 8), sticky=tk.EW)
+        self.code_zip_frame.grid_remove()
+        self.zip_path = tk.StringVar()
+        tk.Entry(self.code_zip_frame, textvariable=self.zip_path, width=50,
+               font=("Segoe UI", 9)).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        tk.Button(self.code_zip_frame, text="浏览...", command=self._browse_zip,
+                font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(4, 0))
 
         row += 1
 
@@ -584,6 +609,23 @@ class WizardApp:
         """获取内置的aisbench_auto_tools_prefix代码目录 (兼容PyInstaller冻结环境)"""
         base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
         return os.path.join(base, "aisbench_auto_tools_prefix")
+
+    def _on_code_source_change(self):
+        """切换测试代码来源: 内置 / 本地zip包"""
+        if self.code_source_var.get() == "builtin":
+            self.code_zip_frame.grid_remove()
+            self.code_builtin_frame.grid()
+        else:
+            self.code_builtin_frame.grid_remove()
+            self.code_zip_frame.grid()
+
+    def _browse_zip(self):
+        path = filedialog.askopenfilename(
+            title="选择代码zip包",
+            filetypes=[("zip files", "*.zip"), ("All files", "*.*")]
+        )
+        if path:
+            self.zip_path.set(path)
 
     def _browse_remote_model(self):
         """远程目录浏览对话框"""
@@ -876,10 +918,19 @@ class WizardApp:
         model = self.model_path_var.get().strip()
         work_dir = self.work_dir_var.get().strip()
 
-        code_dir = self._get_bundled_code_dir()
-        if not os.path.isdir(code_dir):
-            messagebox.showerror("错误", f"未找到内置测试代码目录:\n{code_dir}")
-            return
+        if self.code_source_var.get() == "builtin":
+            code_dir = self._get_bundled_code_dir()
+            if not os.path.isdir(code_dir):
+                messagebox.showerror("错误", f"未找到内置测试代码目录:\n{code_dir}\n\n请改用本地zip包模式")
+                return
+        else:
+            zipf = self.zip_path.get().strip()
+            if not zipf:
+                messagebox.showwarning("提示", "请选择本地代码zip包 (或改用程序内置)")
+                return
+            if not os.path.isfile(zipf):
+                messagebox.showwarning("提示", f"zip包不存在: {zipf}")
+                return
 
         if not tar or not model:
             messagebox.showwarning("提示", "请先完成镜像包和模型路径选择")
@@ -1013,22 +1064,43 @@ class WizardApp:
             self._log_docker("  ⚹ 已取消\n")
             return
 
-        # Step 3: 上传内置测试代码
-        self._log_docker("[3/4] 上传内置测试代码...\n")
-        code_src_dir = self._get_bundled_code_dir()
-        extracted_path = f"{self.docker.remote_work_base}/aisbench_auto_tools_prefix-main"
+        # Step 3: 上传测试代码 (内置目录 / 本地zip包)
+        if self.code_source_var.get() == "builtin":
+            self._log_docker("[3/4] 上传内置测试代码...\n")
+            code_src_dir = self._get_bundled_code_dir()
+            extracted_path = f"{self.docker.remote_work_base}/aisbench_auto_tools_prefix-main"
 
-        ok, msg = self.docker.upload_directory(
-            code_src_dir, extracted_path,
-            callback=lambda t: self._log_docker(t)  # 直接写缓冲区
-        )
-        if not ok:
-            self._log_docker(f"  ✗ 代码上传失败: {msg}\n")
-            return
+            ok, msg = self.docker.upload_directory(
+                code_src_dir, extracted_path,
+                callback=lambda t: self._log_docker(t)  # 直接写缓冲区
+            )
+            if not ok:
+                self._log_docker(f"  ✗ 代码上传失败: {msg}\n")
+                return
+            self.root.after(0, lambda: self.docker_info_labels["zip"].config(text="内置代码包"))
+        else:
+            self._log_docker("[3/4] 上传并解压代码zip包...\n")
+            zipf = self.zip_path.get().strip()
+            zip_name = os.path.basename(zipf)
+            remote_zip = f"{self.docker.remote_work_base}/{zip_name}"
+
+            ok = self.ssh.upload_file(zipf, remote_zip)
+            if not ok:
+                self._log_docker("  ✗ 代码包上传失败\n")
+                return
+
+            ok, extracted_path = self.docker.extract_code_zip(
+                remote_zip,
+                self.docker.remote_work_base,
+                callback=lambda t: self._log_docker(t)  # 直接写缓冲区
+            )
+            if not ok:
+                self._log_docker(f"  ✗ 代码解压失败\n")
+                return
+            self.root.after(0, lambda n=zip_name: self.docker_info_labels["zip"].config(text=n))
 
         self.code_host_path = extracted_path
-        self.root.after(0, lambda: self.docker_info_labels["zip"].config(text="内置代码包"))
-        self._log_docker(f"  ✓ 代码已上传到: {extracted_path}\n\n")
+        self._log_docker(f"  ✓ 代码已就绪: {extracted_path}\n\n")
 
         if self._cancel_flag.is_set():
             self._log_docker("  ⚹ 已取消\n")
@@ -2107,6 +2179,9 @@ class WizardApp:
         if self.current_step == 1:
             if not self.tar_path.get() or not self.model_path_var.get():
                 messagebox.showwarning("提示", "请完成镜像包和模型路径选择")
+                return
+            if self.code_source_var.get() == "zip" and not self.zip_path.get().strip():
+                messagebox.showwarning("提示", "请选择本地代码zip包 (或改用程序内置)")
                 return
         if self.current_step == 2 and (not self.docker or not self.docker.container_is_running()):
             if not messagebox.askyesno("提示", "Docker容器尚未部署，是否继续?"):
