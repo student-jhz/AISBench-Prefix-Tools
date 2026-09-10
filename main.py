@@ -496,6 +496,9 @@ class WizardApp:
                font=("Segoe UI", 9)).pack(side=tk.LEFT, fill=tk.X, expand=True)
         tk.Button(tar_frame, text="浏览...", command=self._browse_tar,
                 font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(4, 0))
+        tk.Button(tar_frame, text="镜像下载链接", command=lambda: self._open_link(
+                "https://github.com/AISBench/benchmark/releases/tag/v3.1-20260630-master"),
+                font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(4, 0))
 
         row += 1
 
@@ -510,6 +513,9 @@ class WizardApp:
         tk.Button(zip_frame, text="浏览...", command=self._browse_zip,
                 font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(4, 0))
         tk.Button(zip_frame, text="从GitHub下载", command=self._download_github,
+                font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(4, 0))
+        tk.Button(zip_frame, text="代码下载链接", command=lambda: self._open_link(
+                "https://github.com/rayn-zzz/aisbench_auto_tools_prefix"),
                 font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(4, 0))
 
         row += 1
@@ -744,34 +750,6 @@ class WizardApp:
             self.docker_info_labels[key] = val_lbl
 
         info_frame.columnconfigure(1, weight=1)
-
-        # 下载链接
-        link_frame = tk.Frame(frame, bg=COLOR_CARD, relief=tk.SOLID, bd=1)
-        link_frame.pack(fill=tk.X, pady=4)
-
-        tk.Label(link_frame, text="下载链接:", bg=COLOR_CARD, fg=COLOR_TEXT_MUTED,
-               font=("Segoe UI", 9)).grid(row=0, column=0, sticky=tk.NW, padx=16, pady=8)
-
-        link_inner = tk.Frame(link_frame, bg=COLOR_CARD)
-        link_inner.grid(row=0, column=1, sticky=tk.W, padx=8, pady=8)
-
-        link_items = [
-            ("代码zip包", "https://github.com/rayn-zzz/aisbench_auto_tools_prefix"),
-            ("aisbench镜像", "https://github.com/AISBench/benchmark/releases/tag/v3.1-20260630-master"),
-        ]
-        self.link_urls = {}
-        for i, (label, url) in enumerate(link_items):
-            row = tk.Frame(link_inner, bg=COLOR_CARD)
-            row.pack(fill=tk.X, pady=2)
-            tk.Label(row, text=f"{label}:", bg=COLOR_CARD, fg=COLOR_TEXT,
-                   font=("Segoe UI", 9), width=10, anchor=tk.W).pack(side=tk.LEFT)
-            tk.Label(row, text=url, bg=COLOR_CARD, fg=COLOR_PRIMARY,
-                   font=("Consolas", 8), cursor="hand2").pack(side=tk.LEFT)
-            tk.Button(row, text="打开", font=("Segoe UI", 8),
-                    command=lambda u=url: self._open_link(u)).pack(side=tk.LEFT, padx=(8, 0))
-            self.link_urls[label] = url
-
-        link_frame.columnconfigure(1, weight=1)
 
         # 部署按钮
         btn_frame = tk.Frame(frame, bg=COLOR_BG)
