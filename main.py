@@ -1405,6 +1405,8 @@ class WizardApp:
 
         tk.Button(gen_frame, text="添加用例", font=("Segoe UI", 8),
                 command=self._add_test_case).pack(side=tk.LEFT, padx=4)
+        tk.Button(gen_frame, text="复制用例", font=("Segoe UI", 8),
+                command=self._duplicate_test_case).pack(side=tk.LEFT, padx=4)
         tk.Button(gen_frame, text="删除用例", font=("Segoe UI", 8),
                 command=self._delete_test_case).pack(side=tk.LEFT, padx=4)
 
@@ -1671,6 +1673,22 @@ class WizardApp:
                  command=dialog.destroy).pack(side=tk.LEFT, padx=8)
 
         dialog.bind('<Return>', lambda e: _confirm())
+
+    def _duplicate_test_case(self):
+        """复制选中的测试用例到列表末尾"""
+        selection = self.test_tree.selection()
+        if not selection:
+            messagebox.showwarning("提示", "请先选择要复制的用例行")
+            return
+        item_index = self.test_tree.index(selection[0])
+        if self.designer.duplicate_case(item_index):
+            self._refresh_test_tree()
+            # 选中新追加的行, 便于直接双击编辑
+            children = self.test_tree.get_children()
+            if children:
+                last = children[-1]
+                self.test_tree.selection_set(last)
+                self.test_tree.see(last)
 
     def _delete_test_case(self):
         """删除选中的测试用例"""

@@ -143,6 +143,24 @@ class TestDesigner:
             return True
         return False
 
+    def duplicate_case(self, idx: int) -> bool:
+        """复制指定用例(含全部参数), 追加到列表末尾"""
+        if 0 <= idx < len(self.test_cases):
+            src = self.test_cases[idx]
+            self.test_cases.append(TestCase(
+                input_len=src.input_len,
+                output_len=src.output_len,
+                data_num_recommended=src.data_num_recommended,
+                data_num_min=src.data_num_min,
+                concurrency_recommended=src.concurrency_recommended,
+                concurrency_max=src.concurrency_max,
+                repeat_rate=src.repeat_rate,
+                dp=src.dp,
+                is_custom=True,
+            ))
+            return True
+        return False
+
     def add_custom_case(self, input_len: int, output_len: int,
                         data_num: int = None, concurrency: int = None):
         """添加自定义用例"""
