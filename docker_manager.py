@@ -197,6 +197,63 @@ class DockerManager:
         else:
             return False, f"容器启动失败，状态: {out}"
 
+    def upload_directory(self, local_dir: str, remote_dir: str,
+                         callback: Callable[[str], None] = None) -> Tuple[bool, str]:
+        """
+        递归上传本地目录到远程目录 (SFTP)
+        返回 (success, remote_dir 或 错误信息)
+        """
+        if not self.ssh.connected or not self.ssh.sftp:
+            return False, "SSH未连接"
+
+        local_dir = os.path.abspath(local_dir)
+        if not os.path.isdir(local_dir):
+            return False, f"本地目录不存在: {local_dir}"
+
+        # 收集文件清单 (排除缓存/版本库文件)
+        file_list = []
+        for root, dirs, files in os.walk(local_dir):
+            dirs[:] = [d for d in dirs if d not in ('__pycache__', '.git')]
+            for f in files:
+                if f.endswith(('.pyc', '.pyo')):
+                    continue
+                full = os.path.join(root, f)
+                rel = os.path.relpath(full, local_dir).replace('\\', '/')
+                file_list.append((full, rel))
+
+        total = len(file_list)
+        if total == 0:
+            return False, f"本地目录为空: {local_dir}"
+        if callback:
+            callback(f"  共 {total} 个文件待上传\n")
+
+        self.ssh.mkdir_p(remote_dir)
+        created_dirs = {remote_dir}
+
+        done = 0
+        for full, rel in file_list:
+            # 确保远程父目录存在
+            cur = remote_dir
+            for part in rel.split('/')[:-1]:
+                cur = f"{cur}/{part}"
+                if cur not in created_dirs:
+                    self.ssh.mkdir_p(cur)
+                    created_dirs.add(cur)
+
+            remote_path = f"{remote_dir}/{rel}"
+            ok = self.ssh.upload_file(full, remote_path)
+            done += 1
+            if callback:
+                callback(f"\r  上传中: {done}/{total}  {rel}")
+            if not ok:
+                if callback:
+                    callback(f"\n  ✗ 上传失败: {rel}\n")
+                return False, f"上传失败: {rel}"
+
+        if callback:
+            callback("\n")
+        return True, remote_dir
+
     def extract_code_zip(self, remote_zip_path: str,
                          extract_dir: str = None,
                          callback: Callable[[str], None] = None) -> Tuple[bool, str]:

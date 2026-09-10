@@ -207,7 +207,6 @@ class WizardApp:
         self.config_data = {}
         self.code_host_path = ""
         self.remote_tar_path = ""
-        self.remote_zip_path = ""
 
         # 日志处理器 + 取消标志（解决后台线程阻塞UI）
         self._cancel_flag = threading.Event()
@@ -493,7 +492,7 @@ class WizardApp:
         frame = self.step_frames[1]
 
         self._build_step_header(frame, "步骤 2: 选择文件与模型",
-                               "选择AISBench镜像tar包、代码zip包和模型路径")
+                                "选择AISBench镜像tar包和模型路径 (代码已内置)")
 
         form = tk.Frame(frame, bg=COLOR_CARD, relief=tk.SOLID, bd=1)
         form.pack(fill=tk.BOTH, expand=True, pady=8)
@@ -516,19 +515,17 @@ class WizardApp:
 
         row += 1
 
-        # 代码zip
-        tk.Label(form, text="aisbench_auto_tools_prefix 代码 zip:", bg=COLOR_CARD, fg=COLOR_TEXT,
+        # 测试代码 (已内置)
+        tk.Label(form, text="测试代码 (已内置):", bg=COLOR_CARD, fg=COLOR_TEXT,
                font=("Segoe UI", 9)).grid(row=row, column=0, sticky=tk.W, padx=16, pady=8)
-        zip_frame = tk.Frame(form, bg=COLOR_CARD)
-        zip_frame.grid(row=row, column=1, columnspan=2, padx=16, pady=8, sticky=tk.EW)
-        self.zip_path = tk.StringVar()
-        tk.Entry(zip_frame, textvariable=self.zip_path, width=50,
-               font=("Segoe UI", 9)).pack(side=tk.LEFT, fill=tk.X, expand=True)
-        tk.Button(zip_frame, text="浏览...", command=self._browse_zip,
-                font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(4, 0))
-        tk.Button(zip_frame, text="代码下载链接", command=lambda: self._open_link(
-                "https://github.com/rayn-zzz/aisbench_auto_tools_prefix"),
-                font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(4, 0))
+        code_frame = tk.Frame(form, bg=COLOR_CARD)
+        code_frame.grid(row=row, column=1, columnspan=2, padx=16, pady=8, sticky=tk.EW)
+        code_dir = self._get_bundled_code_dir()
+        code_desc = "aisbench_auto_tools_prefix (程序内置, 部署时自动上传)" \
+            if os.path.isdir(code_dir) else "未找到内置代码!"
+        tk.Label(code_frame, text=code_desc,
+                 bg=COLOR_CARD, fg=(COLOR_TEXT if os.path.isdir(code_dir) else COLOR_ERROR),
+                 font=("Segoe UI", 9), anchor=tk.W).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         row += 1
 
@@ -583,13 +580,10 @@ class WizardApp:
         if path:
             self.tar_path.set(path)
 
-    def _browse_zip(self):
-        path = filedialog.askopenfilename(
-            title="选择代码zip包",
-            filetypes=[("zip files", "*.zip"), ("All files", "*.*")]
-        )
-        if path:
-            self.zip_path.set(path)
+    def _get_bundled_code_dir(self) -> str:
+        """获取内置的aisbench_auto_tools_prefix代码目录 (兼容PyInstaller冻结环境)"""
+        base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+        return os.path.join(base, "aisbench_auto_tools_prefix")
 
     def _browse_remote_model(self):
         """远程目录浏览对话框"""
@@ -879,12 +873,16 @@ class WizardApp:
             return
 
         tar = self.tar_path.get().strip()
-        zipf = self.zip_path.get().strip()
         model = self.model_path_var.get().strip()
         work_dir = self.work_dir_var.get().strip()
 
-        if not tar or not zipf or not model:
-            messagebox.showwarning("提示", "请先完成文件和模型路径选择")
+        code_dir = self._get_bundled_code_dir()
+        if not os.path.isdir(code_dir):
+            messagebox.showerror("错误", f"未找到内置测试代码目录:\n{code_dir}")
+            return
+
+        if not tar or not model:
+            messagebox.showwarning("提示", "请先完成镜像包和模型路径选择")
             return
         if not work_dir:
             messagebox.showwarning("提示", "请输入远程工作目录路径")
@@ -925,7 +923,7 @@ class WizardApp:
         self._flush_timer_id = self.root.after(200, self._flush_log_buffer)
 
         def _do_deploy():
-            self._deploy_sequence(tar, zipf, model)
+            self._deploy_sequence(tar, model)
             # 结束后恢复UI
             def _restore():
                 self.deploy_btn.config(state=tk.NORMAL, text="重新部署")
@@ -941,7 +939,7 @@ class WizardApp:
 
         threading.Thread(target=_do_deploy, daemon=True).start()
 
-    def _deploy_sequence(self, tar_path, zip_path, model_path):
+    def _deploy_sequence(self, tar_path, model_path):
         """部署序列"""
         # DockerManager已在_start_deploy中初始化，保持remote_work_base设置
         work_dir = self.work_dir_var.get().strip()
@@ -1015,28 +1013,22 @@ class WizardApp:
             self._log_docker("  ⚹ 已取消\n")
             return
 
-        # Step 3: 上传并解压代码zip
-        self._log_docker("[3/4] 上传并解压代码包...\n")
-        zip_name = os.path.basename(zip_path)
-        self.remote_zip_path = f"{self.docker.remote_work_base}/{zip_name}"
+        # Step 3: 上传内置测试代码
+        self._log_docker("[3/4] 上传内置测试代码...\n")
+        code_src_dir = self._get_bundled_code_dir()
+        extracted_path = f"{self.docker.remote_work_base}/aisbench_auto_tools_prefix-main"
 
-        ok = self.ssh.upload_file(zip_path, self.remote_zip_path)
-        if not ok:
-            self._log_docker("  ✗ 代码包上传失败\n")
-            return
-
-        ok, extracted_path = self.docker.extract_code_zip(
-            self.remote_zip_path,
-            self.docker.remote_work_base,
+        ok, msg = self.docker.upload_directory(
+            code_src_dir, extracted_path,
             callback=lambda t: self._log_docker(t)  # 直接写缓冲区
         )
         if not ok:
-            self._log_docker(f"  ✗ 代码解压失败\n")
+            self._log_docker(f"  ✗ 代码上传失败: {msg}\n")
             return
 
         self.code_host_path = extracted_path
-        self.root.after(0, lambda p=extracted_path: self.docker_info_labels["zip"].config(text=p))
-        self._log_docker(f"  ✓ 代码解压到: {extracted_path}\n\n")
+        self.root.after(0, lambda: self.docker_info_labels["zip"].config(text="内置代码包"))
+        self._log_docker(f"  ✓ 代码已上传到: {extracted_path}\n\n")
 
         if self._cancel_flag.is_set():
             self._log_docker("  ⚹ 已取消\n")
@@ -2113,8 +2105,8 @@ class WizardApp:
             messagebox.showwarning("提示", "请先连接到远程主机")
             return
         if self.current_step == 1:
-            if not self.tar_path.get() or not self.zip_path.get() or not self.model_path_var.get():
-                messagebox.showwarning("提示", "请完成所有文件选择")
+            if not self.tar_path.get() or not self.model_path_var.get():
+                messagebox.showwarning("提示", "请完成镜像包和模型路径选择")
                 return
         if self.current_step == 2 and (not self.docker or not self.docker.container_is_running()):
             if not messagebox.askyesno("提示", "Docker容器尚未部署，是否继续?"):
