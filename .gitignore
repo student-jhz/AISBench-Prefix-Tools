@@ -3,8 +3,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 build/
-dist/*
-!dist/AISBench-Prefix-Tools.exe
+dist/
 *.egg
 
 # PyInstaller

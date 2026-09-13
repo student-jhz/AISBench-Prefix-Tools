@@ -17,7 +17,7 @@ Windows 桌面工具，用于远程部署 AISBench 测试环境并自动设计/�
 
 ### 方式一：直接下载 EXE（最简单）
 
-从仓库 [dist/AISBench-Prefix-Tools.exe](dist/AISBench-Prefix-Tools.exe) 下载，双击即可运行，**无需安装 Python 和任何依赖**。
+从 [Releases](https://github.com/student-jhz/AISBench-Prefix-Tools/releases) 页面下载 `AISBench-Prefix-Tools.exe`，双击即可运行，**无需安装 Python 和任何依赖**。
 
 ### 方式二：从源码运行
 
