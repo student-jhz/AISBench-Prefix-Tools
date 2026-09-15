@@ -1935,6 +1935,45 @@ class WizardApp:
                                                   bg="#1e1e1e", fg="#d4d4d4")
         self.exec_log.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
 
+        # Pane 3: 结果摘要表 (测试完成后展示, 不仅仅打印到日志)
+        res_pane = tk.Frame(self.exec_paned, bg=COLOR_BG)
+        self.exec_paned.add(res_pane, minsize=90, stretch="always")
+        res_header = tk.Frame(res_pane, bg=COLOR_BG)
+        res_header.pack(fill=tk.X, pady=(4, 0))
+        tk.Label(res_header, text="结果摘要:", bg=COLOR_BG, fg=COLOR_TEXT,
+               font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
+        self.results_info_lbl = tk.Label(res_header, text="(测试完成后显示结果摘要)",
+                                         bg=COLOR_BG, fg=COLOR_TEXT_MUTED,
+                                         font=("Segoe UI", 8))
+        self.results_info_lbl.pack(side=tk.LEFT, padx=8)
+
+        res_tree_frame = tk.Frame(res_pane)
+        res_tree_frame.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
+
+        res_columns = ("input", "output", "req", "max_cc", "cc", "in_tput",
+                       "out_tput", "ttft_avg", "tpot_avg", "qps", "hbm_hit", "ext_hit")
+        self.results_tree = ttk.Treeview(res_tree_frame, columns=res_columns,
+                                         show="headings", height=3,
+                                         selectmode="browse")
+        res_headings = [("Input", 64), ("Output", 64), ("Req", 60), ("Max_CC", 64),
+                        ("CC", 60), ("In_Tput", 84), ("Out_Tput", 84),
+                        ("TTFT_avg", 80), ("TPOT_avg", 80), ("QPS", 60),
+                        ("HBM_Hit%", 76), ("Ext_Hit%", 76)]
+        for col, (title, width) in zip(res_columns, res_headings):
+            self.results_tree.heading(col, text=title)
+            self.results_tree.column(col, width=width, anchor=tk.CENTER,
+                                     stretch=True)
+
+        res_vsb = tk.Scrollbar(res_tree_frame, orient=tk.VERTICAL,
+                               command=self.results_tree.yview)
+        res_hsb = tk.Scrollbar(res_tree_frame, orient=tk.HORIZONTAL,
+                               command=self.results_tree.xview)
+        self.results_tree.config(yscrollcommand=res_vsb.set,
+                                 xscrollcommand=res_hsb.set)
+        self.results_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        res_vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        res_hsb.pack(side=tk.BOTTOM, fill=tk.X)
+
     def _browse_local_output(self):
         path = filedialog.askdirectory(title="选择本地结果保存目录")
         if path:
@@ -1949,6 +1988,46 @@ class WizardApp:
 
         summary = self.designer.get_summary()
         self.summary_text.config(text=summary)
+
+    def _clear_results_table(self, msg="(测试完成后显示结果摘要)"):
+        """清空界面上的结果摘要表"""
+        if not hasattr(self, 'results_tree'):
+            return
+        for item in self.results_tree.get_children():
+            self.results_tree.delete(item)
+        self.results_info_lbl.config(text=msg)
+
+    def _show_results_table(self, results, csv_path, log_dir):
+        """在界面结果摘要表格中展示解析结果 (主线程调用)"""
+        if not hasattr(self, 'results_tree'):
+            return
+
+        def _fmt(v, decimals=2):
+            if v is None or v == "":
+                return "-"
+            try:
+                return f"{float(v):,.{decimals}f}"
+            except (ValueError, TypeError):
+                return str(v)
+
+        for item in self.results_tree.get_children():
+            self.results_tree.delete(item)
+
+        for row in results:
+            self.results_tree.insert("", tk.END, values=(
+                _fmt(row.get('input_len'), 0), _fmt(row.get('output_len'), 0),
+                _fmt(row.get('total_req'), 0), _fmt(row.get('max_cc'), 0),
+                _fmt(row.get('cc'), 0),
+                _fmt(row.get('input_token_throughput')),
+                _fmt(row.get('output_throughput')),
+                _fmt(row.get('TTFT_avg')), _fmt(row.get('TPOT_avg')),
+                _fmt(row.get('qps')),
+                _fmt(row.get('hbm_hit_rate'), 1),
+                _fmt(row.get('external_hit_rate'), 1),
+            ))
+
+        self.results_info_lbl.config(
+            text=f"共 {len(results)} 条记录  |  CSV: {csv_path}  |  日志: {log_dir}")
 
     def _execute_tests(self):
         """执行测试完整流程: 生成.sh → 上传 → 运行 → 下载日志 → 解析CSV"""
@@ -1967,6 +2046,7 @@ class WizardApp:
 
         self.exec_log.delete(1.0, tk.END)
         self._exec_log_handler.reset()
+        self._clear_results_table()
         self.exec_test_btn.config(state=tk.DISABLED, text="执行中...")
 
         # 启动定时刷新执行日志
@@ -2124,12 +2204,18 @@ class WizardApp:
                 )
             self._log_exec("-" * 125 + "\n")
 
+            # 将结果摘要以表格形式展示到界面上
+            self.root.after(0, lambda: self._show_results_table(
+                results, csv_path, local_log_dir))
+
             self.root.after(0, lambda: messagebox.showinfo(
                 "完成",
                 f"测试完成!\n\nCSV: {csv_path}\n日志: {local_log_dir}\n共 {len(results)} 条记录"
             ))
         else:
             self._log_exec("  ✗ 未能从日志中提取到有效结果\n")
+            self.root.after(0, lambda: self._clear_results_table(
+                "✗ 未提取到有效结果，请检查执行日志"))
             preflight_path = os.path.join(local_log_dir, "preflight.log")
             if os.path.exists(preflight_path):
                 try:

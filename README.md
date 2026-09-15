@@ -166,7 +166,7 @@ python3 aisbench_test.py \
 - **CSV 文件**：`results_test_logs_<时间戳>.csv`（包含 TTFT/TPOT/E2EL、吞吐量、命中率等指标）
 - **日志文件**：`test_logs_<时间戳>/test_<input>_<output>.log`（原始测试日志）
 
-执行日志区域实时输出进度，完成后直接打印结果摘要表：
+执行日志区域实时输出进度，完成后在界面底部 **结果摘要表格** 中直接展示关键指标（Input/Output/请求数/并发/吞吐/TTFT/TPOT/QPS/命中率，并标注 CSV 与日志路径），同时日志区也打印文本摘要表：
 
 ```
 结果摘要:
